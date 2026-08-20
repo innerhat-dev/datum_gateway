@@ -225,6 +225,7 @@ td:not(.label) {
 .tables-container form TABLE,
 .tables-container form table {
 	width: 100%;
+	min-width: 960px;
 	background: var(--bg-card);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -233,6 +234,15 @@ td:not(.label) {
 	font-size: 0.85rem;
 	border-collapse: separate;
 	border-spacing: 0;
+	table-layout: auto;
+}
+
+/* Allow wide client tables to scroll instead of crushing columns */
+.tables-container form {
+	display: block;
+	width: 100%;
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
 }
 
 .tables-container form TD,
@@ -242,6 +252,7 @@ td:not(.label) {
 	color: var(--text);
 	background: transparent;
 	vertical-align: middle;
+	white-space: nowrap;
 }
 
 .tables-container form TR:first-child TD,
@@ -295,14 +306,41 @@ a.btn,
 	border: 1px solid var(--accent-border);
 	background: linear-gradient(180deg, rgba(59, 158, 255, 0.22), rgba(59, 158, 255, 0.1));
 	color: var(--accent-hover);
-	padding: 10px 22px;
-	margin: 4px;
-	border-radius: 999px;
+	padding: 8px 16px;
+	margin: 2px;
+	border-radius: 8px;
 	font-weight: 620;
-	font-size: 0.95rem;
+	font-size: 0.9rem;
 	font-family: inherit;
 	letter-spacing: 0.01em;
+	white-space: nowrap;
+	line-height: 1.2;
+	min-width: max-content;
+	flex-shrink: 0;
 	transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+/* Keep nav pills round; table action buttons stay rectangular pills */
+.menu-container a {
+	border-radius: 999px;
+}
+
+/* Clients/Threads command cells must not crush buttons */
+.tables-container form TD:last-child,
+.tables-container form td:last-child {
+	white-space: nowrap;
+	width: 1%;
+	vertical-align: middle;
+}
+
+.tables-container form button {
+	padding: 6px 14px;
+	border-radius: 8px;
+	white-space: nowrap;
+	writing-mode: horizontal-tb;
+	width: auto;
+	height: auto;
+	min-width: 4.5rem;
 }
 
 button:hover:not([disabled]),
