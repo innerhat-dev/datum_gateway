@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <microhttpd.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -887,10 +888,38 @@ int datum_api_thread_dashboard(struct MHD_Connection *connection) {
 	return datum_api_submit_uncached_response(connection, MHD_HTTP_OK, response);
 }
 
+
+typedef struct {
+	int tid;
+	int cid;
+	double sort_num;
+	const char *sort_str;
+	int use_str;
+} datum_client_entry_t;
+
+static int datum_client_sort_dir = 1;
+
+static int datum_client_entry_cmp(const void *a, const void *b) {
+	const datum_client_entry_t *ea = (const datum_client_entry_t *)a;
+	const datum_client_entry_t *eb = (const datum_client_entry_t *)b;
+	int c;
+	if (ea->use_str) {
+		const char *sa = ea->sort_str ? ea->sort_str : "";
+		const char *sb = eb->sort_str ? eb->sort_str : "";
+		c = strcasecmp(sa, sb);
+	} else {
+		c = (ea->sort_num < eb->sort_num) ? -1 : (ea->sort_num > eb->sort_num) ? 1 : 0;
+	}
+	if (c == 0) {
+		c = (ea->tid != eb->tid) ? (ea->tid - eb->tid) : (ea->cid - eb->cid);
+	}
+	return c * datum_client_sort_dir;
+}
+
 int datum_api_client_dashboard(struct MHD_Connection *connection) {
 	struct MHD_Response *response;
 	int connected_clients = 0;
-	int i, sz = 0, max_sz = 0, j, ii;
+	int i, sz = 0, max_sz = 0, j, ii, n = 0;
 	char *output = NULL;
 	T_DATUM_MINER_DATA *m = NULL;
 	uint64_t tsms;
@@ -900,94 +929,199 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 	
 	const int max_threads = global_stratum_app ? global_stratum_app->max_threads : 0;
 	
+	/* Server-side sort: /clients?sort=<key>&dir=asc|desc — no JavaScript */
+	const char *sort_key = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "sort");
+	const char *sort_dir = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "dir");
+	if (!sort_key) sort_key = "tid";
+	int dir_mul = (sort_dir && 0 == strcmp(sort_dir, "desc")) ? -1 : 1;
+
 	for (i = 0; i < max_threads; ++i) {
-		connected_clients+=global_stratum_app->datum_threads[i].connected_clients;
+		connected_clients += global_stratum_app->datum_threads[i].connected_clients;
 	}
 	
-	max_sz = www_clients_top_html_sz + www_foot_html_sz + (connected_clients * 1024) + 2048; // approximate max size of each row
-	output = calloc(max_sz+16,1);
-	if (!output) {
-		return MHD_NO;
+	datum_client_entry_t *entries = NULL;
+	if (connected_clients > 0) {
+		entries = calloc((size_t)connected_clients, sizeof(datum_client_entry_t));
+		if (!entries) {
+			return MHD_NO;
+		}
 	}
 	
 	tsms = current_time_millis();
 	
-	sz = snprintf(output, max_sz-1-sz, "%s", www_clients_top_html);
-	
-	if (!datum_api_check_admin_password_httponly(connection, datum_api_create_response_authfail_clients)) {
-		return MHD_YES;
-	}
-	
-	sz += snprintf(&output[sz], max_sz-1-sz, "<form action='/cmd' method='post'><input type='hidden' name='csrf' value='%s' /><TABLE><TR><TD><U>TID/CID</U></TD>  <TD><U>RemHost</U></TD>  <TD><U>Auth Username</U></TD> <TD><U>Subbed</U></TD> <TD><U>Last Accepted</U></TD> <TD><U>VDiff</U></TD> <TD><U>DiffA (A)</U></TD> <TD><U>DiffR (R)</U></TD> <TD><U>Hashrate (age)</U></TD> <TD><U>Coinbase</U></TD> <TD><U>UserAgent</U> </TD><TD><U>Command</U></TD></TR>", datum_config.api_csrf_token);
-	
 	for (j = 0; j < max_threads; ++j) {
-		for(ii=0;ii<global_stratum_app->max_clients_thread;ii++) {
-			if (global_stratum_app->datum_threads[j].client_data[ii].fd > 0) {
-				m = (T_DATUM_MINER_DATA *)global_stratum_app->datum_threads[j].client_data[ii].app_client_data;
-				sz += snprintf(&output[sz], max_sz-1-sz, "<TR><TD>%d/%d</TD>", j,ii);
-				
-				sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%s</TD>", global_stratum_app->datum_threads[j].client_data[ii].rem_host);
-				
-				sz += snprintf(&output[sz], max_sz-1-sz, "<TD>");
-				sz += strncpy_html_escape(&output[sz], m->last_auth_username, max_sz-1-sz);
-				sz += snprintf(&output[sz], max_sz-1-sz, "</TD>");
-				
+		for (ii = 0; ii < global_stratum_app->max_clients_thread; ii++) {
+			if (global_stratum_app->datum_threads[j].client_data[ii].fd <= 0) continue;
+			if (!entries || n >= connected_clients) continue;
+			m = (T_DATUM_MINER_DATA *)global_stratum_app->datum_threads[j].client_data[ii].app_client_data;
+			datum_client_entry_t *e = &entries[n++];
+			e->tid = j;
+			e->cid = ii;
+			e->use_str = 0;
+			e->sort_str = "";
+			e->sort_num = 0;
+
+			if (0 == strcmp(sort_key, "host")) {
+				e->use_str = 1;
+				e->sort_str = global_stratum_app->datum_threads[j].client_data[ii].rem_host;
+			} else if (0 == strcmp(sort_key, "user")) {
+				e->use_str = 1;
+				e->sort_str = m->last_auth_username;
+			} else if (0 == strcmp(sort_key, "subbed")) {
+				e->sort_num = m->subscribed ? (double)m->subscribe_tsms : 0.0;
+			} else if (0 == strcmp(sort_key, "last")) {
+				e->sort_num = m->subscribed ? (double)m->stats.last_share_tsms : 0.0;
+			} else if (0 == strcmp(sort_key, "vdiff")) {
+				e->sort_num = m->subscribed ? (double)m->current_diff : 0.0;
+			} else if (0 == strcmp(sort_key, "diffa")) {
+				e->sort_num = m->subscribed ? (double)m->share_diff_accepted : 0.0;
+			} else if (0 == strcmp(sort_key, "diffr")) {
+				e->sort_num = m->subscribed ? (double)m->share_diff_rejected : 0.0;
+			} else if (0 == strcmp(sort_key, "hash")) {
+				hr = 0.0;
 				if (m->subscribed) {
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD> <span style=\"font-family: monospace;\">%4.4x</span> %.1fs</TD>", m->sid, (double)(tsms - m->subscribe_tsms)/1000.0);
-					
-					if (m->stats.last_share_tsms) {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%.1fs</TD>", (double)(tsms - m->stats.last_share_tsms)/1000.0);
-					} else {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>N/A</TD>");
-					}
-					
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%"PRIu64"</TD>", m->current_diff);
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%"PRIu64" (%"PRIu64")</TD>", m->share_diff_accepted, m->share_count_accepted);
-					
-					hr = 0.0;
-					if (m->share_diff_accepted > 0) {
-						hr = ((double)m->share_diff_rejected / (double)(m->share_diff_accepted + m->share_diff_rejected))*100.0;
-					}
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%"PRIu64" (%"PRIu64") %.2f%%</TD>", m->share_diff_rejected, m->share_count_rejected, hr);
-					
-					astat = m->stats.active_index?0:1; // inverted
-					hr = 0.0;
+					astat = m->stats.active_index ? 0 : 1;
 					if ((m->stats.last_swap_ms > 0) && (m->stats.diff_accepted[astat] > 0)) {
-						hr = ((double)m->stats.diff_accepted[astat] / (double)((double)m->stats.last_swap_ms/1000.0)) * 0.004294967296; // Th/sec based on shares/sec
+						hr = ((double)m->stats.diff_accepted[astat] / (double)((double)m->stats.last_swap_ms / 1000.0)) * 0.004294967296;
 					}
-					if (((double)(tsms - m->stats.last_swap_tsms)/1000.0) < 180.0) {
-						thr += hr;
-					}
-					if (m->share_diff_accepted > 0) {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%.2f Th/s (%.1fs)</TD>", hr, (double)(tsms - m->stats.last_swap_tsms)/1000.0);
-					} else {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>N/A</TD>");
-					}
-					
-					if (m->coinbase_selection < (sizeof(cbnames) / sizeof(cbnames[0]))) {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>%s</TD>", cbnames[m->coinbase_selection]);
-					} else {
-						sz += snprintf(&output[sz], max_sz-1-sz, "<TD>Unknown</TD>");
-					}
-					
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD>");
-					sz += strncpy_html_escape(&output[sz], m->useragent, max_sz-1-sz);
-					sz += snprintf(&output[sz], max_sz-1-sz, "</TD>");
-				} else {
-					sz += snprintf(&output[sz], max_sz-1-sz, "<TD COLSPAN=\"8\">Not Subscribed</TD>");
 				}
-				
-				sz += snprintf(&output[sz], max_sz-1-sz, "<TD><button name='kill_client' value='%d_%d_%lu_%lu' onclick=\"sendPostRequest('/cmd', {cmd:'kill_client',tid:%d,cid:%d,t:%lu,id:%lu}); return false;\">Kick</button></TD></TR>", j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id, j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id);
+				e->sort_num = hr;
+			} else if (0 == strcmp(sort_key, "coinbase")) {
+				e->use_str = 1;
+				if (m->subscribed && m->coinbase_selection < (sizeof(cbnames) / sizeof(cbnames[0]))) {
+					e->sort_str = cbnames[m->coinbase_selection];
+				} else {
+					e->sort_str = m->subscribed ? "Unknown" : "";
+				}
+			} else if (0 == strcmp(sort_key, "agent")) {
+				e->use_str = 1;
+				e->sort_str = m->useragent;
+			} else {
+				/* default: tid/cid */
+				e->sort_num = (double)j * 100000.0 + (double)ii;
 			}
 		}
 	}
 	
-	sz += snprintf(&output[sz], max_sz-1-sz, "</TABLE></form><p class=\"table-footer\">Total active hashrate estimate: %.2f Th/s</p><script>", thr);
-	sz += snprintf(&output[sz], max_sz-1-sz, www_assets_post_js, datum_config.api_csrf_token);
-	sz += snprintf(&output[sz], max_sz-1-sz, "</script>%s", www_foot_html);
+	datum_client_sort_dir = dir_mul;
+	if (entries && n > 1) {
+		qsort(entries, (size_t)n, sizeof(datum_client_entry_t), datum_client_entry_cmp);
+	}
 	
-	// return the home page with some data and such
-	response = MHD_create_response_from_buffer (sz, (void *) output, MHD_RESPMEM_MUST_FREE);
+	max_sz = www_clients_top_html_sz + www_foot_html_sz + (connected_clients * 1024) + 4096;
+	output = calloc(max_sz + 16, 1);
+	if (!output) {
+		free(entries);
+		return MHD_NO;
+	}
+
+	sz = snprintf(output, max_sz - 1, "%s", www_clients_top_html);
+
+	if (!datum_api_check_admin_password_httponly(connection, datum_api_create_response_authfail_clients)) {
+		free(entries);
+		free(output);
+		return MHD_YES;
+	}
+
+	/* Header row: each sortable column is a link that toggles dir when active */
+	{
+		struct { const char *key; const char *label; } cols[] = {
+			{ "tid", "TID/CID" },
+			{ "host", "RemHost" },
+			{ "user", "Auth Username" },
+			{ "subbed", "Subbed" },
+			{ "last", "Last Accepted" },
+			{ "vdiff", "VDiff" },
+			{ "diffa", "DiffA (A)" },
+			{ "diffr", "DiffR (R)" },
+			{ "hash", "Hashrate (age)" },
+			{ "coinbase", "Coinbase" },
+			{ "agent", "UserAgent" },
+		};
+		sz += snprintf(&output[sz], max_sz - 1 - sz,
+			"<form action='/cmd' method='post'><input type='hidden' name='csrf' value='%s' /><TABLE><TR>",
+			datum_config.api_csrf_token);
+		for (i = 0; i < (int)(sizeof(cols) / sizeof(cols[0])); i++) {
+			const char *k = cols[i].key;
+			int active = (0 == strcmp(sort_key, k));
+			const char *next_dir = (active && dir_mul > 0) ? "desc" : "asc";
+			const char *cls = active ? (dir_mul > 0 ? "sortable sort-asc" : "sortable sort-desc") : "sortable";
+			sz += snprintf(&output[sz], max_sz - 1 - sz,
+				"<TD class=\"%s\"><a href=\"/clients?sort=%s&amp;dir=%s\"><U>%s</U></a></TD>",
+				cls, k, next_dir, cols[i].label);
+		}
+		sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD><U>Command</U></TD></TR>");
+	}
+
+	for (i = 0; i < n; i++) {
+		j = entries[i].tid;
+		ii = entries[i].cid;
+		m = (T_DATUM_MINER_DATA *)global_stratum_app->datum_threads[j].client_data[ii].app_client_data;
+
+		sz += snprintf(&output[sz], max_sz - 1 - sz, "<TR><TD>%d/%d</TD>", j, ii);
+		sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%s</TD>", global_stratum_app->datum_threads[j].client_data[ii].rem_host);
+		sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>");
+		sz += strncpy_html_escape(&output[sz], m->last_auth_username, max_sz - 1 - sz);
+		sz += snprintf(&output[sz], max_sz - 1 - sz, "</TD>");
+
+		if (m->subscribed) {
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD> <span style=\"font-family: monospace;\">%4.4x</span> %.1fs</TD>", m->sid, (double)(tsms - m->subscribe_tsms) / 1000.0);
+
+			if (m->stats.last_share_tsms) {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%.1fs</TD>", (double)(tsms - m->stats.last_share_tsms) / 1000.0);
+			} else {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>N/A</TD>");
+			}
+
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%" PRIu64 "</TD>", m->current_diff);
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%" PRIu64 " (%" PRIu64 ")</TD>", m->share_diff_accepted, m->share_count_accepted);
+
+			hr = 0.0;
+			if (m->share_diff_accepted > 0) {
+				hr = ((double)m->share_diff_rejected / (double)(m->share_diff_accepted + m->share_diff_rejected)) * 100.0;
+			}
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%" PRIu64 " (%" PRIu64 ") %.2f%%</TD>", m->share_diff_rejected, m->share_count_rejected, hr);
+
+			astat = m->stats.active_index ? 0 : 1;
+			hr = 0.0;
+			if ((m->stats.last_swap_ms > 0) && (m->stats.diff_accepted[astat] > 0)) {
+				hr = ((double)m->stats.diff_accepted[astat] / (double)((double)m->stats.last_swap_ms / 1000.0)) * 0.004294967296;
+			}
+			if (((double)(tsms - m->stats.last_swap_tsms) / 1000.0) < 180.0) {
+				thr += hr;
+			}
+			if (m->share_diff_accepted > 0) {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%.2f Th/s (%.1fs)</TD>", hr, (double)(tsms - m->stats.last_swap_tsms) / 1000.0);
+			} else {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>N/A</TD>");
+			}
+
+			if (m->coinbase_selection < (sizeof(cbnames) / sizeof(cbnames[0]))) {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%s</TD>", cbnames[m->coinbase_selection]);
+			} else {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>Unknown</TD>");
+			}
+
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>");
+			sz += strncpy_html_escape(&output[sz], m->useragent, max_sz - 1 - sz);
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "</TD>");
+		} else {
+			sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD COLSPAN=\"8\">Not Subscribed</TD>");
+		}
+
+		sz += snprintf(&output[sz], max_sz - 1 - sz,
+			"<TD><button name='kill_client' value='%d_%d_%lu_%lu' onclick=\"sendPostRequest('/cmd', {cmd:'kill_client',tid:%d,cid:%d,t:%lu,id:%lu}); return false;\">Kick</button></TD></TR>",
+			j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id,
+			j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id);
+	}
+
+	free(entries);
+
+	sz += snprintf(&output[sz], max_sz - 1 - sz, "</TABLE></form><p class=\"table-footer\">Total active hashrate estimate: %.2f Th/s</p><script>", thr);
+	sz += snprintf(&output[sz], max_sz - 1 - sz, www_assets_post_js, datum_config.api_csrf_token);
+	sz += snprintf(&output[sz], max_sz - 1 - sz, "</script>%s", www_foot_html);
+
+	response = MHD_create_response_from_buffer(sz, (void *)output, MHD_RESPMEM_MUST_FREE);
 	MHD_add_response_header(response, "Content-Type", "text/html");
 	return datum_api_submit_uncached_response(connection, MHD_HTTP_OK, response);
 }

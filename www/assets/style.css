@@ -552,3 +552,32 @@ form[action="/config"] .table-wrapper,
 form[action='/config'] .table-wrapper {
 	justify-content: center;
 }
+/* Sortable clients table headers (server-side links) */
+.tables-container form tr:first-child td.sortable,
+.tables-container form TR:first-child TD.sortable {
+	cursor: pointer;
+	user-select: none;
+}
+.tables-container form tr:first-child td.sortable a,
+.tables-container form TR:first-child TD.sortable a {
+	color: inherit;
+	text-decoration: none;
+}
+.tables-container form tr:first-child td.sortable:hover a,
+.tables-container form TR:first-child TD.sortable:hover a {
+	color: #62b2ff;
+}
+.tables-container form tr:first-child td.sortable.sort-asc::after,
+.tables-container form TR:first-child TD.sortable.sort-asc::after {
+	content: " \25B2";
+	font-size: 0.7em;
+	color: #3b9eff;
+	margin-left: 4px;
+}
+.tables-container form tr:first-child td.sortable.sort-desc::after,
+.tables-container form TR:first-child TD.sortable.sort-desc::after {
+	content: " \25BC";
+	font-size: 0.7em;
+	color: #3b9eff;
+	margin-left: 4px;
+}
