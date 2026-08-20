@@ -6,34 +6,7 @@
 	<link rel="icon" type="image/x-icon" href="/assets/icons/favicon.ico">
 	<link rel="stylesheet" type="text/css" href="./assets/style.css">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<style>
-		.table-wrapper {
-			justify-content: center;
-		}
-		
-		.table-container {
-			max-width: 800px;
-		}
-		
-		button {
-			background-color: #444;
-			color: #3498db;
-			padding: 10px 20px;
-			margin: 5px;
-			border-radius: 5px;
-			text-decoration: none;
-			transition: background-color 0.3s, color 0.3s;
-			font-weight: bold;
-			font-size: large;
-		}
-		
-		.notice {
-			padding: 10px;
-			background-color: #2a2a3b;
-			white-space: nowrap;
-		}
-	</style>
-</head>
+	</head>
 <body>
 	<div class="container">
 		<div class="header">
@@ -41,7 +14,7 @@
 		</div>
 		<div class="menu-container">
 			<a href="/">Status</a>
-			<a href="/config" style="background-color: darkslategrey;">Config</a>
+			<a href="/config" class="active">Config</a>
 			<a href="/clients">Clients</a>
 			<a href="/threads">Threads</a>
 			<a href="/coinbaser">Coinbaser</a>
@@ -50,7 +23,7 @@
 	
 	<form action='/config' method='get' name="continue_form">
 	<div class="tables-container">
-		<div style="margin-top: 20px; text-align: center;">
+		<div class="actions">
 			<button>Continue</button>
 		</div>
 		
@@ -63,7 +36,7 @@
 			</div>
 		</div>
 		
-		<div style="margin-bottom: 20px; text-align: center;">
+		<div class="actions">
 			<button>Continue</button>
 		</div>
 	</div>

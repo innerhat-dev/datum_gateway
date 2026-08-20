@@ -6,76 +6,7 @@
 	<link rel="icon" type="image/x-icon" href="/assets/icons/favicon.ico">
 	<link rel="stylesheet" type="text/css" href="./assets/style.css">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<style>
-		.table-wrapper {
-			justify-content: center;
-		}
-		
-		.table-container {
-			max-width: 800px;
-		}
-		
-		button {
-			background-color: #444;
-			color: #3498db;
-			padding: 10px 20px;
-			margin: 5px;
-			border-radius: 5px;
-			text-decoration: none;
-			transition: background-color 0.3s, color 0.3s;
-			font-weight: bold;
-			font-size: large;
-		}
-		button[disabled] {
-			color: #777;
-			background-color: #400;
-		}
-		
-		.setting-row {
-			border-bottom: 1px solid #444;
-		}
-		
-		.setting-row:last-child {
-			border-bottom: none;
-		}
-		
-		.flex-row {
-			display: flex;
-			flex-direction: row;
-		}
-		
-		label.label {
-			padding: 10px;
-			background-color: #2a2a3b;
-			white-space: nowrap;
-		}
-		.flex-row input:not([type=checkbox]) {
-			flex: 1;
-		}
-		.flex-row input[type=checkbox] {
-			zoom: 2;
-		}
-		input,select {
-			color: white;
-			background-color: black;
-			z-index: 1;
-			padding: 0 10px;
-		}
-		input[readonly],input[disabled],select[readonly] {
-			color: grey;
-		}
-		label.tip {
-			display: block;
-			padding-left: 10px;
-			padding-right: 10px;
-			padding-top: 1px;
-			padding-bottom: 10px;
-			background-color: #2a2a3b;
-			font-size: 80%;
-			font-style: italic;
-		}
-	</style>
-</head>
+	</head>
 <body>
 	<div class="container">
 		<div class="header">
@@ -83,7 +14,7 @@
 		</div>
 		<div class="menu-container">
 			<a href="/">Status</a>
-			<a href="/config" style="background-color: darkslategrey;">Config</a>
+			<a href="/config" class="active">Config</a>
 			<a href="/clients">Clients</a>
 			<a href="/threads">Threads</a>
 			<a href="/coinbaser">Coinbaser</a>
@@ -93,7 +24,7 @@
 	<form action='/config' method='post'>
 	<input type='hidden' name='csrf' value='${*CSRF_TOKEN}' />
 	<div class="tables-container">
-		<div style="margin-top: 20px; text-align: center;">
+		<div class="actions">
 			<button${disabled:*ro}>Save</button>
 			${msg:*ro}
 		</div>
@@ -228,7 +159,7 @@
 			</div>
 		</div>
 		
-		<div style="margin-bottom: 20px; text-align: center;">
+		<div class="actions">
 			<button${disabled:*ro}>Save</button>
 			${msg:*ro}
 		</div>
