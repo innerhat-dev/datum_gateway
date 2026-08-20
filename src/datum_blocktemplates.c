@@ -54,6 +54,7 @@
 #include "datum_conf.h"
 #include "datum_stratum.h"
 #include "datum_pow.h"
+#include "datum_coinbaser.h"
 
 volatile sig_atomic_t new_notify = 0;
 atomic_int new_notify_threadsafe = 0;
@@ -338,8 +339,24 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 			}
 		}
 		jval = json_object_get(gbt, "coinbaseaux");
-		if (!want_blake2b && json_is_object(jval) && json_object_get(jval, "blake2b_headline")) {
-			want_blake2b = true;
+		if (json_is_object(jval)) {
+			json_t *hl = json_object_get(jval, "blake2b_headline");
+			const char *hs = json_is_string(hl) ? json_string_value(hl) : NULL;
+			size_t hlen = hs ? strlen(hs) : 0;
+			if (hlen && !(hlen & 1) && (hlen >> 1) <= 75) {
+				uint8_t hbin[75];
+				size_t hi;
+				for (hi = 0; hi < (hlen >> 1); hi++) {
+					hbin[hi] = hex2bin_uchar(&hs[hi << 1]);
+				}
+				datum_coinbaser_set_blake2b_headline(hbin, (uint16_t)(hlen >> 1));
+				want_blake2b = true;
+				DLOG_INFO("blake2b: activation template, headline is %u bytes", (unsigned)(hlen >> 1));
+			} else {
+				datum_coinbaser_set_blake2b_headline(NULL, 0);
+			}
+		} else {
+			datum_coinbaser_set_blake2b_headline(NULL, 0);
 		}
 		if (tdata->version & 0x80000000) {
 			want_blake2b = true;

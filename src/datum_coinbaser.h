@@ -36,6 +36,7 @@
 #ifndef _DATUM_COINBASE_H_
 #define _DATUM_COINBASE_H_
 
+void datum_coinbaser_set_blake2b_headline(const uint8_t *b, uint16_t n);
 int datum_coinbaser_init(void);
 void generate_coinbase_txns_for_stratum_job_subtypebysize(T_DATUM_STRATUM_JOB *s, int coinbase_index, int remaining_size, bool space_for_en_in_coinbase, int *cb1idx, int *cb2idx, bool special_coinb1);
 void generate_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool empty_only);

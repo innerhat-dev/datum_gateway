@@ -60,6 +60,21 @@ const char *cbstart_hex = "01000000010000000000000000000000000000000000000000000
 
 #define MAX_COINBASE_TAG_SPACE 86 // leaves space for BIP34 height, extranonces, datum prime tag, etc.
 
+// Consensus: the first BLAKE2b block must carry blake2b_headline in its coinbase.
+// The node only offers it in getblocktemplate's coinbaseaux at exactly that height,
+// so a non-empty value here means "this template is the activation block".
+static uint8_t blake2b_headline[75];
+static uint16_t blake2b_headline_len = 0;
+
+void datum_coinbaser_set_blake2b_headline(const uint8_t *b, uint16_t n) {
+	if (!b || !n || n > sizeof(blake2b_headline)) {
+		blake2b_headline_len = 0;
+		return;
+	}
+	memcpy(blake2b_headline, b, n);
+	blake2b_headline_len = n;
+}
+
 int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 	int cb_input_sz = 0;
 	int tag_len[2] = { 0, 0 };
@@ -83,6 +98,9 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 		tag_len[0] = strlen(datum_config.override_mining_coinbase_tag_primary);
 	}
 	tag_len[1] = strlen(datum_config.mining_coinbase_tag_secondary);
+	// The headline is consensus-critical, the tags are not: take its room first.
+	const int headline_room = blake2b_headline_len ? (blake2b_headline_len + 1) : 0;
+	const int max_tag_space = MAX_COINBASE_TAG_SPACE - headline_room;
 	k = tag_len[0] + tag_len[1] + 2;
 	if (!tag_len[1]) {
 		k--;
@@ -91,13 +109,13 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 		}
 	}
 	
-	if (k > MAX_COINBASE_TAG_SPACE) {
+	if (k > max_tag_space) {
 		// something still needs truncating
-		excess = k - MAX_COINBASE_TAG_SPACE;
+		excess = k - max_tag_space;
 		if (tag_len[1] > excess) {
 			// truncating tag1 is enough to cover us
 			tag_len[1] -= excess;
-			k = MAX_COINBASE_TAG_SPACE;
+			k = max_tag_space;
 		} else {
 			// not enough, so need to remove this tag entirely
 			if (tag_len[1]) {
@@ -107,7 +125,26 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 		}
 	}
 	
-	if (k > MAX_COINBASE_TAG_SPACE) {
+	if (k > max_tag_space && headline_room) {
+		// The headline shrank the budget below what the primary tag alone needs.
+		// It only happens on the activation block, and the headline is consensus
+		// while the tag is decoration, so shorten the tag rather than give up.
+		excess = k - max_tag_space;
+		if (tag_len[0] > excess) {
+			tag_len[0] -= excess;
+		} else {
+			tag_len[0] = 0;
+		}
+		k = tag_len[0] + tag_len[1] + 2;
+		if (!tag_len[1]) {
+			k--;
+			if (!tag_len[0]) {
+				k--;
+			}
+		}
+	}
+	
+	if (k > max_tag_space) {
 		// one tag should never exceed 64 bytes, so we're going to panic here.
 		DLOG_FATAL("Could not fit coinbase primary tag alone somehow. This is probably a bug. Panicking. :(");
 		panic_from_thread(__LINE__);
@@ -157,6 +194,14 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 		// we'll push a null char to be consistent, and to not parse the UID as if it were a pool name
 		uchar_to_hex(&cb[i], 0x01); i+=2; cb_input_sz++;
 		uchar_to_hex(&cb[i], 0x00); i+=2; cb_input_sz++;
+	}
+	
+	// Consensus: push the headline for the first BLAKE2b block.
+	if (blake2b_headline_len) {
+		uchar_to_hex(&cb[i], (unsigned char)blake2b_headline_len); i += 2; cb_input_sz++;
+		for (m = 0; m < blake2b_headline_len; m++) {
+			uchar_to_hex(&cb[i], blake2b_headline[m]); i += 2; cb_input_sz++;
+		}
 	}
 	
 	// append the coinbase unique ID tag
