@@ -581,3 +581,38 @@ form[action='/config'] .table-wrapper {
 	color: #3b9eff;
 	margin-left: 4px;
 }
+
+/* Config form — compact spacing */
+.setting-row {
+	padding: 6px 0;
+}
+.setting-row:last-child {
+	padding-bottom: 2px;
+}
+.flex-row {
+	gap: 8px;
+}
+label.label {
+	font-size: 0.82rem;
+	min-width: 10.5rem;
+	line-height: 1.3;
+}
+input,
+select,
+textarea {
+	padding: 6px 10px;
+	font-size: 0.88rem;
+	border-radius: 6px;
+}
+label.tip {
+	padding: 2px 0 0;
+	font-size: 0.74rem;
+	line-height: 1.35;
+}
+.table-container h2 {
+	margin: 0 0 8px;
+	padding: 0 0 6px;
+}
+.actions {
+	margin: 10px 0;
+}
