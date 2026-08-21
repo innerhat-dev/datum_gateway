@@ -2200,7 +2200,8 @@ void datum_stratum_job_refresh_blake2b(T_DATUM_STRATUM_JOB *s) {
 	stratum_job_merkle_root_calc(s, cb_hash, merkle);
 
 	datum_blake2b_header_commitment(
-		s->blake2b_commitment, block_template->version, block_template->previousblockhash_bin,
+		s->blake2b_commitment, block_template->version | UINT32_C(0x80000000),
+		block_template->previousblockhash_bin,
 		(uint32_t)block_template->height, merkle, time_on_wire, block_template->bits_uint,
 		txcount, block_template->header_flags, block_template->xor_key_mask_clear_bits,
 		block_template->xor_key, block_template->merge_mining_rhs);
