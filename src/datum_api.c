@@ -854,7 +854,7 @@ struct MHD_Response *datum_api_thread_dashboard_inner(const bool have_admin) {
 		if (conns) {
 			sz += snprintf(&output[sz], max_sz-1-sz, "<TR><TD>%d</TD>  <TD>%d</TD>  <TD>%d</TD> <TD>%.2f Th/s</TD><TD><button ", j, conns, subs, thr);
 			if (have_admin) {
-				sz += snprintf(&output[sz], max_sz-1-sz, "name='empty_thread' value='%d' onclick=\"sendPostRequest('/cmd', {cmd:'empty_thread',tid:%d}); return false;\"", j, j);
+				sz += snprintf(&output[sz], max_sz-1-sz, "type=\"submit\" name=\"empty_thread\" value=\"%d\"", j);
 			} else {
 				sz += snprintf(&output[sz], max_sz-1-sz, "disabled");
 			}
@@ -1110,8 +1110,7 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 		}
 
 		sz += snprintf(&output[sz], max_sz - 1 - sz,
-			"<TD><button name='kill_client' value='%d_%d_%lu_%lu' onclick=\"sendPostRequest('/cmd', {cmd:'kill_client',tid:%d,cid:%d,t:%lu,id:%lu}); return false;\">Kick</button></TD></TR>",
-			j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id,
+			"<TD><button type=\"submit\" name=\"kill_client\" value=\"%d_%d_%lu_%lu\">Kick</button></TD></TR>",
 			j, ii, (unsigned long)m->connect_tsms, (unsigned long)m->unique_id);
 	}
 

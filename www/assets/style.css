@@ -63,6 +63,7 @@ a:hover {
 	max-width: 1120px;
 	margin: 0 auto;
 	padding: 20px 20px 0;
+	text-align: center;
 }
 
 .header {
@@ -102,14 +103,18 @@ a:hover {
 }
 
 .menu-container {
-	display: flex;
+	display: inline-flex;
 	flex-wrap: wrap;
 	justify-content: center;
-	gap: 8px;
-	padding: 12px 8px 20px;
-	background: transparent;
+	align-items: center;
+	gap: 6px;
+	padding: 6px;
+	margin: 0 auto 20px;
+	background: rgba(59, 158, 255, 0.06);
 	border: none;
-	border-radius: 0;
+	border-radius: 999px;
+	width: fit-content;
+	max-width: 100%;
 }
 
 .menu-container a {
@@ -119,8 +124,8 @@ a:hover {
 	padding: 8px 16px;
 	margin: 0;
 	border-radius: 999px;
-	background: var(--bg-elevated);
-	border: 1px solid var(--border);
+	background: transparent;
+	border: 1px solid transparent;
 	color: var(--text-muted);
 	font-weight: 560;
 	font-size: 0.92rem;
@@ -129,9 +134,9 @@ a:hover {
 }
 
 .menu-container a:hover {
-	background: var(--bg-card);
+	background: rgba(59, 158, 255, 0.1);
 	color: var(--text);
-	border-color: var(--accent-border);
+	border-color: transparent;
 	text-decoration: none;
 }
 
@@ -151,6 +156,7 @@ a:hover {
 	margin: 0 auto;
 	padding: 0 12px 32px;
 	width: 100%;
+	text-align: left;
 }
 
 .table-wrapper {
@@ -305,9 +311,9 @@ a.btn,
 	border: 1px solid var(--accent-border);
 	background: linear-gradient(180deg, rgba(59, 158, 255, 0.22), rgba(59, 158, 255, 0.1));
 	color: var(--accent-hover);
-	padding: 8px 16px;
+	padding: 8px 18px;
 	margin: 2px;
-	border-radius: 8px;
+	border-radius: 999px;
 	font-weight: 620;
 	font-size: 0.9rem;
 	font-family: inherit;
@@ -328,7 +334,7 @@ a.btn,
 
 .tables-container form button {
 	padding: 6px 14px;
-	border-radius: 8px;
+	border-radius: 999px;
 	white-space: nowrap;
 	writing-mode: horizontal-tb;
 	width: auto;
@@ -421,6 +427,17 @@ textarea {
 	transition: border-color 0.15s ease, box-shadow 0.15s ease;
 	width: 100%;
 	max-width: 100%;
+}
+
+select {
+	padding-right: 2.25rem;
+	appearance: none;
+	-webkit-appearance: none;
+	-moz-appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b9bb0' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 0.85rem center;
+	background-size: 12px 8px;
 }
 
 input:focus,
@@ -532,25 +549,16 @@ label.tip {
 
 	.tables-container form TABLE,
 	.tables-container form table {
-		display: block;
-		overflow-x: auto;
-		-webkit-overflow-scrolling: touch;
+		display: table;
 	}
 }
 
 
-/* Config form: keep inputs readable width */
+/* Config cards match other pages full width */
 form[action="/config"] .table-container,
 form[action='/config'] .table-container {
-	max-width: 720px;
-	margin-left: auto;
-	margin-right: auto;
+	max-width: 100%;
 	flex: 1 1 100%;
-}
-
-form[action="/config"] .table-wrapper,
-form[action='/config'] .table-wrapper {
-	justify-content: center;
 }
 /* Sortable clients table headers (server-side links) */
 .tables-container form tr:first-child td.sortable,
@@ -615,4 +623,38 @@ label.tip {
 }
 .actions {
 	margin: 10px 0;
+}
+
+
+/* Themed scrollbars */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--border) var(--bg-elevated);
+}
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+*::-webkit-scrollbar-track {
+	background: var(--bg-elevated);
+	border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 999px;
+	border: 2px solid var(--bg-elevated);
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: #3a4d66;
+}
+
+/* Clients table: one horizontal scroll container only */
+.tables-container form {
+	overflow-x: auto;
+	overflow-y: visible;
+}
+.tables-container form TABLE,
+.tables-container form table {
+	display: table;
+	overflow: visible;
 }
