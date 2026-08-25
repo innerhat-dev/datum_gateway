@@ -658,3 +658,76 @@ label.tip {
 	display: table;
 	overflow: visible;
 }
+
+
+/* Hashrate history charts */
+.hr-chart-card {
+	flex: 1 1 100%;
+	max-width: 100%;
+}
+.hr-range-links {
+	display: flex;
+	gap: 8px;
+	margin: 0 0 10px;
+}
+.hr-range-links a {
+	display: inline-flex;
+	padding: 4px 12px;
+	border-radius: 999px;
+	border: 1px solid var(--border, #243041);
+	color: var(--text-muted, #8b9bb0);
+	font-size: 0.82rem;
+	font-weight: 560;
+}
+.hr-range-links a:hover,
+.hr-range-links a.active {
+	color: var(--accent-hover, #62b2ff);
+	border-color: var(--accent-border, rgba(59,158,255,0.35));
+	background: var(--accent-soft, rgba(59,158,255,0.12));
+	text-decoration: none;
+}
+.hr-stats {
+	margin: 0 0 8px;
+	color: var(--text-muted, #8b9bb0);
+	font-size: 0.88rem;
+	font-variant-numeric: tabular-nums;
+}
+.hr-chart-wrap {
+	width: 100%;
+	overflow: hidden;
+}
+svg.hr-chart {
+	display: block;
+	width: 100%;
+	height: auto;
+	max-height: 220px;
+}
+svg.hr-chart .hr-grid {
+	stroke: var(--border-soft, #1c2633);
+	stroke-width: 1;
+}
+svg.hr-chart .hr-line {
+	stroke: #3b9eff;
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+svg.hr-chart .hr-axis {
+	fill: var(--text-dim, #5f7085);
+	font-size: 10px;
+	font-family: inherit;
+}
+svg.hr-spark {
+	display: inline-block;
+	vertical-align: middle;
+	width: 120px;
+	height: 28px;
+}
+svg.hr-spark .hr-line {
+	stroke: #3b9eff;
+	stroke-width: 1.5;
+	fill: none;
+}
+td.hr-spark-cell {
+	min-width: 130px;
+}

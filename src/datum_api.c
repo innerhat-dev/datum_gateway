@@ -58,12 +58,13 @@
 #include "datum_stratum.h"
 #include "datum_sockets.h"
 #include "datum_protocol.h"
+#include "datum_hashrate_hist.h"
 
 #include "web_resources.h"
 
 const char * const homepage_html_end = "</body></html>";
 
-#define DATUM_API_HOMEPAGE_MAX_SIZE 128000
+#define DATUM_API_HOMEPAGE_MAX_SIZE 160000
 
 const char *cbnames[] = {
 	"Blank",
@@ -185,6 +186,18 @@ void datum_api_var_STRATUM_TOTAL_SUBSCRIPTIONS(char *buffer, size_t buffer_size,
 void datum_api_var_STRATUM_HASHRATE_ESTIMATE(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
 	snprintf(buffer, buffer_size, "%.2f Th/sec", vardata->STRATUM_HASHRATE_ESTIMATE);
 }
+
+void datum_api_var_HASHRATE_STATS(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
+	double cur = 0, avg = 0, peak = 0;
+	char tmp[16384];
+	tmp[0] = 0;
+	datum_hashrate_hist_render_svg(tmp, sizeof(tmp), NULL, vardata->hr_range_sec, &cur, &avg, &peak);
+	snprintf(buffer, buffer_size, "Current: %.2f Th/s · Avg: %.2f Th/s · Peak: %.2f Th/s", cur, avg, peak);
+}
+
+void datum_api_var_HASHRATE_CHART(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
+	datum_hashrate_hist_render_svg(buffer, buffer_size, NULL, vardata->hr_range_sec, NULL, NULL, NULL);
+}
 void datum_api_var_DATUM_PROCESS_UPTIME(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
 	uint64_t uptime_seconds = get_process_uptime_seconds();
 	uint64_t days = uptime_seconds / (24 * 3600);
@@ -270,6 +283,8 @@ DATUM_API_VarEntry var_entries[] = {
 	{"STRATUM_TOTAL_CONNECTIONS", datum_api_var_STRATUM_TOTAL_CONNECTIONS},
 	{"STRATUM_TOTAL_SUBSCRIPTIONS", datum_api_var_STRATUM_TOTAL_SUBSCRIPTIONS},
 	{"STRATUM_HASHRATE_ESTIMATE", datum_api_var_STRATUM_HASHRATE_ESTIMATE},
+	{"HASHRATE_STATS", datum_api_var_HASHRATE_STATS},
+	{"HASHRATE_CHART", datum_api_var_HASHRATE_CHART},
 	
 	{"STRATUM_JOB_INFO", datum_api_var_STRATUM_JOB_INFO},
 	{"STRATUM_JOB_BLOCK_HEIGHT", datum_api_var_STRATUM_JOB_BLOCK_HEIGHT},
@@ -338,7 +353,13 @@ size_t datum_api_fill_vars(const char *input, char *output, size_t max_output_si
 			
 			char * const replacement = &output[output_len];
 			size_t replacement_max_len = max_output_size - output_len;
-			if (replacement_max_len > 256) replacement_max_len = 256;
+			if (var_name_len == 14 && 0 == strncmp(var_start, "HASHRATE_CHART", 14)) {
+				if (replacement_max_len > 12288) replacement_max_len = 12288;
+			} else if (var_name_len == 14 && 0 == strncmp(var_start, "HASHRATE_STATS", 14)) {
+				if (replacement_max_len > 512) replacement_max_len = 512;
+			} else if (replacement_max_len > 256) {
+				replacement_max_len = 256;
+			}
 			const size_t replacement_len = var_fill_func(var_start, var_name_len, replacement, replacement_max_len, vardata);
 			output_len += replacement_len;
 			output[output_len] = 0;
@@ -1008,7 +1029,7 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 		qsort(entries, (size_t)n, sizeof(datum_client_entry_t), datum_client_entry_cmp);
 	}
 	
-	max_sz = www_clients_top_html_sz + www_foot_html_sz + (connected_clients * 1024) + 4096;
+	max_sz = www_clients_top_html_sz + www_foot_html_sz + (connected_clients * 2048) + 24576;
 	output = calloc(max_sz + 16, 1);
 	if (!output) {
 		free(entries);
@@ -1021,6 +1042,26 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 		free(entries);
 		free(output);
 		return MHD_YES;
+	}
+
+	{
+		const char *hr_range = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "hr_range");
+		int range_sec = datum_hashrate_hist_parse_range(hr_range);
+		double cur = 0, avg = 0, peak = 0;
+		char chart[12288];
+		chart[0] = 0;
+		datum_hashrate_hist_render_svg(chart, sizeof(chart), NULL, range_sec, &cur, &avg, &peak);
+		sz += snprintf(&output[sz], max_sz - 1 - sz,
+			"<div class=\"tables-container\"><div class=\"table-wrapper\"><div class=\"table-container hr-chart-card\">"
+			"<h2>Hashrate history (total)</h2>"
+			"<div class=\"hr-range-links\">"
+			"<a href=\"/clients?hr_range=1h\">1h</a>"
+			"<a href=\"/clients?hr_range=6h\">6h</a>"
+			"<a href=\"/clients?hr_range=24h\">24h</a>"
+			"</div>"
+			"<p class=\"hr-stats\">Current: %.2f Th/s · Avg: %.2f Th/s · Peak: %.2f Th/s</p>"
+			"<div class=\"hr-chart-wrap\">%s</div></div></div></div>",
+			cur, avg, peak, chart);
 	}
 
 	/* Header row: each sortable column is a link that toggles dir when active */
@@ -1090,10 +1131,22 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 			if (((double)(tsms - m->stats.last_swap_tsms) / 1000.0) < 180.0) {
 				thr += hr;
 			}
-			if (m->share_diff_accepted > 0) {
-				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%.2f Th/s (%.1fs)</TD>", hr, (double)(tsms - m->stats.last_swap_tsms) / 1000.0);
-			} else {
-				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>N/A</TD>");
+			{
+				char ckey[192];
+				char spark[1024];
+				const char *hr_range2 = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "hr_range");
+				int range2 = datum_hashrate_hist_parse_range(hr_range2);
+				if (m->last_auth_username[0])
+					snprintf(ckey, sizeof(ckey), "%s", m->last_auth_username);
+				else
+					snprintf(ckey, sizeof(ckey), "id-%llu", (unsigned long long)m->unique_id);
+				spark[0] = 0;
+				datum_hashrate_hist_render_sparkline(spark, sizeof(spark), ckey, range2);
+				if (m->share_diff_accepted > 0) {
+					sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD class=\"hr-spark-cell\">%.2f Th/s (%.1fs)<br>%s</TD>", hr, (double)(tsms - m->stats.last_swap_tsms) / 1000.0, spark);
+				} else {
+					sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD class=\"hr-spark-cell\">N/A<br>%s</TD>", spark);
+				}
 			}
 
 			if (m->coinbase_selection < (sizeof(cbnames) / sizeof(cbnames[0]))) {
@@ -1755,10 +1808,13 @@ int datum_api_homepage(struct MHD_Connection *connection) {
 	struct MHD_Response *response;
 	char output[DATUM_API_HOMEPAGE_MAX_SIZE];
 	T_DATUM_API_DASH_VARS vardata;
+	const char *hr_range;
 	
 	memset(&vardata, 0, sizeof(T_DATUM_API_DASH_VARS));
 	
 	datum_api_dash_stats(&vardata);
+	hr_range = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "hr_range");
+	vardata.hr_range_sec = datum_hashrate_hist_parse_range(hr_range);
 	
 	output[0] = 0;
 	datum_api_fill_vars(www_home_html, output, DATUM_API_HOMEPAGE_MAX_SIZE, datum_api_fill_var, &vardata);
