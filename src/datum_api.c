@@ -1131,22 +1131,10 @@ int datum_api_client_dashboard(struct MHD_Connection *connection) {
 			if (((double)(tsms - m->stats.last_swap_tsms) / 1000.0) < 180.0) {
 				thr += hr;
 			}
-			{
-				char ckey[192];
-				char spark[1024];
-				const char *hr_range2 = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "hr_range");
-				int range2 = datum_hashrate_hist_parse_range(hr_range2);
-				if (m->last_auth_username[0])
-					snprintf(ckey, sizeof(ckey), "%s", m->last_auth_username);
-				else
-					snprintf(ckey, sizeof(ckey), "id-%llu", (unsigned long long)m->unique_id);
-				spark[0] = 0;
-				datum_hashrate_hist_render_sparkline(spark, sizeof(spark), ckey, range2);
-				if (m->share_diff_accepted > 0) {
-					sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD class=\"hr-spark-cell\">%.2f Th/s (%.1fs)<br>%s</TD>", hr, (double)(tsms - m->stats.last_swap_tsms) / 1000.0, spark);
-				} else {
-					sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD class=\"hr-spark-cell\">N/A<br>%s</TD>", spark);
-				}
+			if (m->share_diff_accepted > 0) {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>%.2f Th/s (%.1fs)</TD>", hr, (double)(tsms - m->stats.last_swap_tsms) / 1000.0);
+			} else {
+				sz += snprintf(&output[sz], max_sz - 1 - sz, "<TD>N/A</TD>");
 			}
 
 			if (m->coinbase_selection < (sizeof(cbnames) / sizeof(cbnames[0]))) {
