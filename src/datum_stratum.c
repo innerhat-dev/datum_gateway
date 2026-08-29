@@ -974,6 +974,18 @@ static void stratum_note_share(T_DATUM_MINER_DATA *m, bool accepted, uint64_t di
 	}
 }
 
+// A BLAKE2b miner sends 16-hex time and nonce. Against a SHA256d job those
+// parse as garbage and every share fails as high-hash, which looks like a
+// broken miner when the real problem is that the node is not serving BLAKE2b
+// templates yet. Say so, at most once a minute across all clients.
+static void datum_stratum_warn_blake2b_share_on_sha256d(const T_DATUM_CLIENT_DATA *c, const T_DATUM_MINER_DATA *m, const T_DATUM_STRATUM_JOB *job) {
+	static uint64_t last_warn_tsms = 0;
+	const uint64_t now = current_time_millis();
+	if (now - last_warn_tsms < 60000) return;
+	last_warn_tsms = now;
+	DLOG_WARN("Client %s (%s) submitted a BLAKE2b-style share (16-hex time/nonce) for a SHA256d job at height %"PRIu64". The node is not serving BLAKE2b templates, so no share from this miner can be accepted until it does.", c->rem_host, m->useragent[0] ? m->useragent : "unknown agent", job->height);
+}
+
 int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj) {
 	// {"params": ["username", "job", "extranonce2", "time", "nonce", "version"], "id": 1, "method": "mining.submit"}
 	// 0 = username
@@ -1252,6 +1264,7 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		}
 		ntime64 = upk_u64le(ntime8, 0);
 	} else {
+		if (ntime_len == 16) datum_stratum_warn_blake2b_share_on_sha256d(c, m, job);
 		ntime_val = (uint32_t)strtoul(ntime_s, NULL, 16);
 		ntime64 = ntime_val;
 		pk_u32le(block_header, 68, ntime_val);
@@ -1289,6 +1302,7 @@ int client_mining_submit(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_obj
 		}
 		nonce64 = upk_u64le(nonce8, 0);
 	} else {
+		if (nonce_len == 16 && ntime_len != 16) datum_stratum_warn_blake2b_share_on_sha256d(c, m, job);
 		nonce_val = (uint32_t)strtoul(nonce_s, NULL, 16);
 		nonce64 = nonce_val;
 		pk_u32le(block_header, 76, nonce_val);
