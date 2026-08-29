@@ -352,7 +352,19 @@ double datum_stratum_v1_est_total_th_sec(void) {
 }
 
 void datum_stratum_v1_socket_thread_client_closed(T_DATUM_CLIENT_DATA *c, const char *msg) {
+	T_DATUM_MINER_DATA * const m = c->app_client_data;
+	
 	DLOG_DEBUG("Stratum client connection closed. (%s)", msg);
+	
+	if (m && m->subscribed) {
+		m->subscribed = false;
+		const int nclients = datum_stratum_v1_global_subscriber_count();
+		if (m->useragent[0]) {
+			DLOG_INFO("Client dropped from %s (%s): %d client%s", c->rem_host, m->useragent, nclients, (nclients != 1) ? "s" : "");
+		} else {
+			DLOG_INFO("Client dropped from %s: %d client%s", c->rem_host, nclients, (nclients != 1) ? "s" : "");
+		}
+	}
 }
 
 void datum_stratum_v1_socket_thread_client_new(T_DATUM_CLIENT_DATA *c) {
