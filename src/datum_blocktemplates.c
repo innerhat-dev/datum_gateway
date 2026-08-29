@@ -54,6 +54,8 @@
 #include "datum_conf.h"
 #include "datum_stratum.h"
 #include "datum_pow.h"
+#include "datum_coinbaser.h"
+#include "datum_protocol.h"
 
 volatile sig_atomic_t new_notify = 0;
 atomic_int new_notify_threadsafe = 0;
@@ -141,6 +143,31 @@ void datum_template_clear(T_DATUM_TEMPLATE_DATA* p) {
 	p->txn_total_sigops = 0;
 	p->txns = p->local_data;
 	datum_template_clear_header_fields(p);
+}
+
+// The config check allows 60 bytes per coinbase tag and 88 together, but
+// generate_coinbase_input() fits MAX_COINBASE_TAG_SPACE including the
+// separator and cuts the secondary tag to make it. Say so instead of
+// mangling the tag without a word. Logs once per tag pair; the primary
+// changes when the pool sends a new override.
+static void datum_blocktemplates_check_tag_space(void) {
+	static char warned_primary[256] = {0};
+	static char warned_secondary[64] = {0};
+	unsigned char buf[512];
+	const char *primary, *secondary;
+	size_t n_full, n_cut;
+	
+	primary = datum_protocol_is_active() ? datum_config.override_mining_coinbase_tag_primary : datum_config.mining_coinbase_tag_primary;
+	secondary = datum_config.mining_coinbase_tag_secondary;
+	if (!strncmp(warned_primary, primary, sizeof(warned_primary) - 1) && !strncmp(warned_secondary, secondary, sizeof(warned_secondary) - 1)) return;
+	strncpy(warned_primary, primary, sizeof(warned_primary) - 1);
+	strncpy(warned_secondary, secondary, sizeof(warned_secondary) - 1);
+	
+	n_full = datum_coinbaser_tag_bytes(primary, secondary, false, buf, sizeof(buf));
+	n_cut = datum_coinbaser_tag_bytes(primary, secondary, true, buf, sizeof(buf));
+	if (n_cut < n_full) {
+		DLOG_WARN("The coinbase tags exceed the space the coinbaser has for them; the last %zu bytes of mining.coinbase_tag_secondary will not appear in blocks. Shorten the tags to keep them intact.", n_full - n_cut);
+	}
 }
 
 bool datum_gbt_advertise_blake2b(void) {
@@ -355,7 +382,12 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 			tdata->version &= ~0x80000000;
 		}
 		if (!want_blake2b && !strcmp(datum_config.mining_pow_algorithm, "blake2b")) {
+			static bool warned_forced = false;
 			want_blake2b = true;
+			if (!warned_forced) {
+				warned_forced = true;
+				DLOG_WARN("mining.pow_algorithm is blake2b but the template at height %u does not carry the !blake2b rule. Unless this node is on the BLAKE2b chain with an older getblocktemplate, it will reject every block built here; auto follows the node.", tdata->height);
+			}
 		}
 		if (want_blake2b && strcmp(datum_config.mining_pow_algorithm, "sha256d")) {
 			tdata->header_version = 2;
@@ -364,6 +396,8 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 			}
 		}
 	}
+	
+	datum_blocktemplates_check_tag_space();
 	
 	jval = json_object_get(gbt, "bits");
 	if (json_string_length(jval) != 8) {
