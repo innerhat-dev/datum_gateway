@@ -9,10 +9,8 @@ https://github.com/bitcoinknots/bitcoin/discussions/379, and the guide
 in bitcoinknots/bitcoin#378.
 
 Checked against this repository at commit 2fea7e5 and Bitcoin Knots
-v29.4.1.knots20260508rc3 on testnet4. Mainnet parameters (the fork
-height, the starting difficulty) arrive with rc4; the Mainnet section
-below is provisional until then, and the rc4 release notes win over
-anything here.
+v29.4.1.knots20260508rc3 on testnet4; the rc4 parameters below are read
+from the rc4 source. The rc4 release notes win over anything here.
 
 ## Which gateway
 
@@ -30,12 +28,14 @@ or leave it in the build directory) and do not `make install` over one.
 
 ## Node
 
-- Bitcoin Knots with the fork: rc3 for testnet4, rc4 for mainnet once
-  it is released.
+- Bitcoin Knots v29.4.1.knots20260508rc4. It is the first build that
+  runs mainnet, and it moves testnet4's fork height as well (below).
 - `blake2b_headline=<string>` in bitcoin.conf. The node refuses to start
   without it ("This version requires blake2b_headline set manually").
   Until the real headline is published use a placeholder; the value only
-  matters for the fork block itself.
+  matters for the fork block itself. No quotes around the value: the
+  config parser keeps them, and a node whose headline is
+  `"Some Headline"` with the quotes rejects every real fork block.
 - RPC access for the gateway, `blocknotify=killall -USR1 datum_gateway`
   (or the `/NOTIFY` endpoint), and the `blockmaxsize`/`blockmaxweight`
   reservation from the README. None of that changes for BLAKE2b.
@@ -155,32 +155,33 @@ coinbase.
 
 ## Test on testnet4 first
 
-testnet4 forked at height 150027 on 2026-08-27 (rc3), fork-block
-difficulty 2^24, and has been mined by BLAKE2b hardware since. The same
-gateway config works with `chain=testnet4` on the node, the testnet4 RPC
-port (48332 by default) in `rpcurl`, and a testnet address in
-`pool_address`. rc3 refuses to run mainnet without
-`-allow_mainnet_test_only`, so there is no hitting mainnet by accident
-with it.
+rc4 forks testnet4 at height 150308 (rc3 had 150027; blocks between
+the two heights are SHA256d again, so an rc3 node needs rc4 and rewinds
+on its own at startup). The fork block needs its own headline, and its
+difficulty is the previous SHA256d block's shifted 20 bits; testnet4's
+20-minute minimum-difficulty rule applies to BLAKE2b blocks too. The
+same gateway config works with `chain=testnet4` on the node, the
+testnet4 RPC port (48332 by default) in `rpcurl`, and a testnet address
+in `pool_address`.
 
 ## Mainnet
 
-Provisional, written 2026-08-29 before rc4 was published. This section
-is updated when the rc4 release notes are out, and they win over
-anything here.
+From the rc4 source (`src/kernel/chainparams.cpp`), 2026-08-29. The
+rc4 release notes win over anything here.
 
-- Release: `v29.4.1.knots20260508rc4` is the first build with mainnet
-  parameters. rc3 refuses to run mainnet at all.
-- Fork height: set by rc4. The announced plan is the block after the
-  BIP110 chain's current tip, 961639, so 961640 unless a SHA256d block
-  lands on that chain first. The rc4 notes state the final number.
-- Headline: announced separately, after the height is locked, when the
-  Sunday New York Post front page publishes (lately between 12:30 and
-  1:30 AM EDT). Nothing to mine before it. Run with a placeholder in
-  `blake2b_headline` until then; it only matters for the fork block.
-- Fork-block difficulty: set by rc4. testnet4 used a constant 2^24.
-  Whatever the start, expect the first retarget to lower it, since the
-  window spans the slow weeks before the fork.
+- Release: `v29.4.1.knots20260508rc4`, the first build that runs
+  mainnet.
+- Fork height: 961640, the block after the BIP110 chain's tip at
+  961639 (`00000000000000000001bbc439e13f749dca850d32c7a2834165338713027e65`).
+- Headline for 961640: `8-30 NYPost Deride And Conquer` (30 bytes,
+  published 2026-08-30 about 05:00 UTC). Unquoted in bitcoin.conf, exact
+  bytes in `coinbase_tag_secondary`. It only matters for block 961640.
+- Fork-block difficulty: the 961639 target shifted 22 bits, so about
+  3.0e7 from that block's 1.27e14. That is roughly an 11-minute block
+  at 190 TH/s, 22 minutes at 100, 4 minutes at 500. The first retarget,
+  at 963648, will lower it further, since the window spans the slow
+  weeks before the fork.
+- RDTS (BIP110) rules apply from 961640 until September 1, 2027.
 - SHA256d hardware: off once the height is locked. A SHA256d block at
   or after the fork height is invalid.
 - Until the Knots maintainers declare the chain final, treat blocks
@@ -192,7 +193,7 @@ except the node's RPC port, the address, and the tag.
 ## Fork night, in order
 
 1. Node on rc4 with `blake2b_headline=PLACEHOLDER`, started, sitting at
-   the height before the fork.
+   961639.
 2. Gateway from this repository, config as above, started, with a
    `NEW NETWORK BLOCK` line in the log or a job on the dashboard.
 3. Headline published: paste it into `blake2b_headline` and
