@@ -1935,6 +1935,14 @@ int client_mining_subscribe(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_
 	
 	// mark them as subscribed so that notifies actually work
 	m->subscribed = true;
+	{
+		const int nclients = datum_stratum_v1_global_subscriber_count();
+		if (m->useragent[0]) {
+			DLOG_INFO("New client added from %s (%s): %d client%s", c->rem_host, m->useragent, nclients, (nclients != 1) ? "s" : "");
+		} else {
+			DLOG_INFO("New client added from %s: %d client%s", c->rem_host, nclients, (nclients != 1) ? "s" : "");
+		}
+	}
 	
 	// clean work on connect, not quickdiff, doesn't matter if new block or not (don't need empty work speedup on connect)
 	send_mining_notify(c,true,false,false);

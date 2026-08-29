@@ -147,9 +147,6 @@ int main(const int argc, const char * const * const argv) {
 	uint64_t last_datum_protocol_connect_tsms = 0;
 	bool rejecting_stratum = false;
 	uint32_t next_reconnect_attempt_ms = 5000;
-	int last_stats_clients = -1;
-	int last_stats_centi_ths = -1;
-	int stats_ticks = 0;
 	
 	// listen for block notifications
 	// set this up early so a notification doesn't break our init
@@ -254,18 +251,8 @@ int main(const int argc, const char * const * const argv) {
 		usleep(500000);
 		i++;
 		if (i>=600) { // Roughly every 5 minutes spit out some stats to the log
-			const int clients = datum_stratum_v1_global_subscriber_count();
-			const double ths = datum_stratum_v1_est_total_th_sec();
-			const int centi_ths = (int)(ths * 100.0 + 0.5);
-			stats_ticks++;
-			if (clients != last_stats_clients || centi_ths != last_stats_centi_ths || stats_ticks >= 6) {
-				DLOG_INFO("Server stats: %d client%s / %.2f Th/s", clients, (clients!=1)?"s":"", ths);
-				last_stats_clients = clients;
-				last_stats_centi_ths = centi_ths;
-				stats_ticks = 0;
-			} else {
-				DLOG_DEBUG("Server stats: %d client%s / %.2f Th/s", clients, (clients!=1)?"s":"", ths);
-			}
+			i = datum_stratum_v1_global_subscriber_count();
+			DLOG_INFO("Server stats: %d client%s / %.2f Th/s", i, (i!=1)?"s":"", datum_stratum_v1_est_total_th_sec());
 			i=0;
 		}
 		
