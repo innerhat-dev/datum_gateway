@@ -142,6 +142,7 @@ There is an [example configuration file included in the doc/ directory](doc/exam
 Note that the API/web admin password is also used for preventing CSRF attacks, so it is crucial you set it to something reasonably secure (or disable the API/web interface entirely).
 
 You should review the [documentation on usernames](doc/usernames.md) next.
+Console logging is INFO by default and emits state changes rather than periodic ticks; see [logging strategy](doc/logging.md).
 Once you have everything running, you can point miners at the Gateway.
 
 ### BLAKE2b header v2 (Knots POW change)
