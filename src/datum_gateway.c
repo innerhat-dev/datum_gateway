@@ -147,6 +147,9 @@ int main(const int argc, const char * const * const argv) {
 	uint64_t last_datum_protocol_connect_tsms = 0;
 	bool rejecting_stratum = false;
 	uint32_t next_reconnect_attempt_ms = 5000;
+	int last_stats_clients = -1;
+	int last_stats_centi_ths = -1;
+	int stats_ticks = 0;
 	
 	// listen for block notifications
 	// set this up early so a notification doesn't break our init
@@ -210,8 +213,11 @@ int main(const int argc, const char * const * const argv) {
 	
 	// Try to connect to the DATUM server, if setup to do so.
 	if (datum_config.datum_pool_host[0] != 0) {
+		if ((current_time_millis()-15000 < last_datum_protocol_connect_tsms) && (!datum_protocol_is_active())) {
+			DLOG_INFO("Waiting up to 15s for DATUM server");
+		}
 		while((current_time_millis()-15000 < last_datum_protocol_connect_tsms) && (!datum_protocol_is_active())) {
-			DLOG_INFO("Waiting on DATUM server... %d", (int)((last_datum_protocol_connect_tsms-(current_time_millis()-15000))/1000));
+			DLOG_DEBUG("Waiting on DATUM server... %d", (int)((last_datum_protocol_connect_tsms-(current_time_millis()-15000))/1000));
 			sleep(1);
 			if ((datum_config.datum_pool_host[0] != 0) && (!datum_protocol_thread_is_active())) {
 				datum_protocol_start_connector();
@@ -248,8 +254,18 @@ int main(const int argc, const char * const * const argv) {
 		usleep(500000);
 		i++;
 		if (i>=600) { // Roughly every 5 minutes spit out some stats to the log
-			i = datum_stratum_v1_global_subscriber_count();
-			DLOG_INFO("Server stats: %d client%s / %.2f Th/s", i, (i!=1)?"s":"", datum_stratum_v1_est_total_th_sec());
+			const int clients = datum_stratum_v1_global_subscriber_count();
+			const double ths = datum_stratum_v1_est_total_th_sec();
+			const int centi_ths = (int)(ths * 100.0 + 0.5);
+			stats_ticks++;
+			if (clients != last_stats_clients || centi_ths != last_stats_centi_ths || stats_ticks >= 6) {
+				DLOG_INFO("Server stats: %d client%s / %.2f Th/s", clients, (clients!=1)?"s":"", ths);
+				last_stats_clients = clients;
+				last_stats_centi_ths = centi_ths;
+				stats_ticks = 0;
+			} else {
+				DLOG_DEBUG("Server stats: %d client%s / %.2f Th/s", clients, (clients!=1)?"s":"", ths);
+			}
 			i=0;
 		}
 		

@@ -506,6 +506,121 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 	return tdata;
 }
 
+typedef struct {
+	uint32_t height;
+	uint64_t reward_sats;  /* t->coinbasevalue */
+	uint32_t txn_count;
+	uint32_t nbytes;       /* t->txn_total_size */
+	uint8_t  priority;     /* 0 standard, 1 priority */
+} job_log_state_t;
+
+static job_log_state_t last_logged_job;
+static bool last_logged_job_valid = false;
+
+static void log_stratum_job_update(const T_DATUM_TEMPLATE_DATA *t, const int nclients, const uint8_t priority) {
+	const bool first_or_new_height = !last_logged_job_valid || (t->height != last_logged_job.height);
+	const bool fields_changed = last_logged_job_valid && (
+		t->coinbasevalue != last_logged_job.reward_sats ||
+		t->txn_count != last_logged_job.txn_count ||
+		t->txn_total_size != last_logged_job.nbytes ||
+		priority != last_logged_job.priority
+	);
+	
+	if (first_or_new_height) {
+		DLOG_INFO("Updating %s stratum job for block %u: %.8f BTC, %u txns, %u bytes (Sent to %d stratum client%s)",
+			priority ? "priority" : "standard",
+			t->height,
+			(double)t->coinbasevalue / (double)100000000.0,
+			t->txn_count,
+			t->txn_total_size,
+			nclients,
+			(nclients != 1) ? "s" : "");
+	} else if (fields_changed) {
+		const int d_txns = (int)((int64_t)t->txn_count - (int64_t)last_logged_job.txn_count);
+		const int d_bytes = (int)((int64_t)t->txn_total_size - (int64_t)last_logged_job.nbytes);
+		const double d_btc = ((double)t->coinbasevalue - (double)last_logged_job.reward_sats) / (double)100000000.0;
+		if (priority != last_logged_job.priority) {
+			DLOG_INFO("%s block %u job %+d txns (%+d B), reward %+.8f BTC",
+				priority ? "priority" : "standard", t->height, d_txns, d_bytes, d_btc);
+		} else {
+			DLOG_INFO("block %u job %+d txns (%+d B), reward %+.8f BTC",
+				t->height, d_txns, d_bytes, d_btc);
+		}
+	} else {
+		DLOG_DEBUG("Job refresh unchanged for block %u (%d clients)", t->height, nclients);
+		return;
+	}
+	
+	last_logged_job.height = t->height;
+	last_logged_job.reward_sats = t->coinbasevalue;
+	last_logged_job.txn_count = t->txn_count;
+	last_logged_job.nbytes = t->txn_total_size;
+	last_logged_job.priority = priority;
+	last_logged_job_valid = true;
+}
+
+static char last_notify_hash[72];
+static int last_notify_height;
+static uint64_t last_notify_tsms;
+static bool last_notify_valid = false;
+
+static void log_network_block_notification(const char *applied_prevhash, const uint32_t applied_height) {
+	char hash[72];
+	int height;
+	const uint64_t now = current_time_millis();
+	
+	pthread_mutex_lock(&new_notify_lock);
+	strncpy(hash, (char *)new_notify_blockhash, sizeof(hash) - 1);
+	hash[sizeof(hash) - 1] = 0;
+	height = new_notify_height;
+	pthread_mutex_unlock(&new_notify_lock);
+	
+	const bool has_hash = (hash[0] != 0);
+	const bool real_hash = has_hash && (hash[0] != 'T');
+	const bool applied = real_hash && applied_prevhash && applied_prevhash[0] && (strcmp(hash, applied_prevhash) == 0);
+	const bool recent = last_notify_valid && ((now - last_notify_tsms) < 500);
+	const bool same_hash = last_notify_valid && has_hash && last_notify_hash[0] && (strcmp(hash, last_notify_hash) == 0) &&
+		(last_notify_height <= 0 || height <= 0 || last_notify_height == height);
+	const bool hashless_dup = recent && !has_hash;
+	
+	if (applied || hashless_dup || (recent && same_hash)) {
+		DLOG_DEBUG("NEW NETWORK BLOCK NOTIFICATION RECEIVED");
+		return;
+	}
+	
+	if (real_hash && applied_prevhash && applied_prevhash[0] && applied_height > 0 &&
+	    height > 0 && height == (int)applied_height && strcmp(hash, applied_prevhash) != 0) {
+		DLOG_WARN("NEW NETWORK BLOCK NOTIFICATION disagrees: %s (%d) vs template %s (%u)",
+			hash, height, applied_prevhash, applied_height);
+		last_notify_valid = true;
+		last_notify_tsms = now;
+		last_notify_height = height;
+		strncpy(last_notify_hash, hash, sizeof(last_notify_hash) - 1);
+		last_notify_hash[sizeof(last_notify_hash) - 1] = 0;
+		return;
+	}
+	
+	if (real_hash) {
+		if (height > 0) {
+			DLOG_INFO("NEW NETWORK BLOCK NOTIFICATION RECEIVED: %s (%d)", hash, height);
+		} else {
+			DLOG_INFO("NEW NETWORK BLOCK NOTIFICATION RECEIVED: %s", hash);
+		}
+	} else {
+		DLOG_INFO("NEW NETWORK BLOCK NOTIFICATION RECEIVED");
+	}
+	
+	last_notify_valid = true;
+	last_notify_tsms = now;
+	last_notify_height = height;
+	if (has_hash) {
+		strncpy(last_notify_hash, hash, sizeof(last_notify_hash) - 1);
+		last_notify_hash[sizeof(last_notify_hash) - 1] = 0;
+	} else {
+		last_notify_hash[0] = 0;
+	}
+}
+
 void *datum_gateway_fallback_notifier(void *args) {
 	CURL *tcurl = NULL;
 	char req[512];
@@ -598,6 +713,9 @@ void *datum_gateway_template_thread(void *args) {
 	
 	char p1[72];
 	p1[0] = 0;
+	uint32_t p1_height = 0;
+	bool gbt_fetch_down = false;
+	uint64_t last_gbt_error_tsms = 0;
 	
 	while(1) {
 		i++;
@@ -612,10 +730,26 @@ void *datum_gateway_template_thread(void *args) {
 		
 		if (!gbt) {
 			datum_blocktemplates_error = "Could not fetch new template!";
-			DLOG_ERROR("Could not fetch new template from %s!", datum_config.bitcoind_rpcurl);
+			{
+				const uint64_t now = current_time_millis();
+				if (!gbt_fetch_down) {
+					DLOG_ERROR("Could not fetch new template from %s!", datum_config.bitcoind_rpcurl);
+					gbt_fetch_down = true;
+					last_gbt_error_tsms = now;
+				} else if ((now - last_gbt_error_tsms) >= 30000) {
+					DLOG_ERROR("Could not fetch new template from %s!", datum_config.bitcoind_rpcurl);
+					last_gbt_error_tsms = now;
+				} else {
+					DLOG_DEBUG("Could not fetch new template from %s!", datum_config.bitcoind_rpcurl);
+				}
+			}
 			sleep(1);
 			continue;
 		} else {
+			if (gbt_fetch_down) {
+				DLOG_INFO("Template fetch recovered from %s", datum_config.bitcoind_rpcurl);
+				gbt_fetch_down = false;
+			}
 			res_val = json_object_get(gbt, "result");
 			if (!res_val) {
 				datum_blocktemplates_error = "Could not decode GBT result!";
@@ -638,6 +772,7 @@ void *datum_gateway_template_thread(void *args) {
 						if (new_block) {
 							last_block_change = current_time_millis();
 							strcpy(p1, t->previousblockhash);
+							p1_height = t->height;
 							was_notified = false;
 							DLOG_INFO("NEW NETWORK BLOCK: %s (%lu)", t->previousblockhash, (unsigned long)t->height);
 						} else {
@@ -658,8 +793,7 @@ void *datum_gateway_template_thread(void *args) {
 						
 						// use this template to setup for a coinbaser wait job while the empty + full w/blank jobs are blasted
 						// then this job will get blasted when its ready.
-						i = datum_stratum_v1_global_subscriber_count();
-						DLOG_INFO("Updating priority stratum job for block %lu: %.8f BTC, %lu txns, %lu bytes (Sent to %llu stratum client%s)", (unsigned long)t->height, (double)t->coinbasevalue / (double)100000000.0, (unsigned long)t->txn_count, (unsigned long)t->txn_total_size, (unsigned long long)i, (i!=1)?"s":"");
+						log_stratum_job_update(t, datum_stratum_v1_global_subscriber_count(), 1);
 						update_stratum_job(t,false,JOB_STATE_FULL_PRIORITY_WAIT_COINBASER);
 					} else {
 						if (was_notified) {
@@ -722,8 +856,7 @@ void *datum_gateway_template_thread(void *args) {
 							}
 							pthread_mutex_unlock(&new_notify_lock);
 						} else {
-							i = datum_stratum_v1_global_subscriber_count();
-							DLOG_INFO("Updating standard stratum job for block %lu: %.8f BTC, %lu txns, %lu bytes (Sent to %llu stratum client%s)", (unsigned long)t->height, (double)t->coinbasevalue / (double)100000000.0, (unsigned long)t->txn_count, (unsigned long)t->txn_total_size, (unsigned long long)i, (i!=1)?"s":"");
+							log_stratum_job_update(t, datum_stratum_v1_global_subscriber_count(), 0);
 							update_stratum_job(t,false,JOB_STATE_FULL_NORMAL_WAIT_COINBASER);
 						}
 					}
@@ -741,7 +874,7 @@ void *datum_gateway_template_thread(void *args) {
 					new_notify_threadsafe = 0;
 					was_notified = 1;
 					wnc = 0;
-					DLOG_INFO("NEW NETWORK BLOCK NOTIFICATION RECEIVED");
+					log_network_block_notification(p1, p1_height);
 					break;
 				}
 			}
