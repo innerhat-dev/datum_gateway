@@ -210,17 +210,15 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 		err_val = json_object_get(val, "error");
 		
 		if (!res_val || json_is_null(res_val) || (err_val && !json_is_null(err_val))) {
-			char *s;
-			
 			if (err_val && !json_is_null(err_val)) {
-				s = json_dumps(err_val, JSON_COMPACT);
+				char * const s = json_dumps(err_val, JSON_COMPACT);
+				DLOG_ERROR("JSON-RPC call failed: %s", s);
+				free(s);
 			} else {
-				s = strdup("(unknown reason)");
+				// A null result with no error is how submitblock reports success;
+				// callers that expect a value treat the NULL return as failure themselves.
+				DLOG_DEBUG("JSON-RPC call returned a null result");
 			}
-			
-			DLOG_ERROR("JSON-RPC call failed: %s", s);
-			
-			free(s);
 			
 			goto err_out;
 		}
