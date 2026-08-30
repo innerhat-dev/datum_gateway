@@ -1690,8 +1690,15 @@ int send_mining_notify(T_DATUM_CLIENT_DATA *c, bool clean, bool quickdiff, bool 
 	// coinbase selection is tacked on to the job ID
 	// prepending a Q means it's a duplicate job, but with a new diff (needed per stratum protocol "spec")
 	// prepending an N means this is an empty (subsidy-only) block with a small coinbase and has coinbase ID 255/0xff
-	if (new_block || stratum_job_is_blake2b(j)) {
+	if (new_block) {
 		cbselect = 0;
+	} else if (stratum_job_is_blake2b(j)) {
+		// Every v2 client shares one coinbase, since the hasher extranonce
+		// lives in the header. The job-level choice therefore applies to all
+		// of them: the payout-carrying coinbase once the coinbaser has
+		// answered, the pool-address-only type 0 before that. The job ID
+		// carries the index, so the submit path and the pool protocol follow.
+		cbselect = full_coinbase ? (unsigned int)j->blake2b_coinbase_index : 0;
 	} else {
 		if (full_coinbase) {
 			cbselect = m->coinbase_selection;
@@ -1717,7 +1724,7 @@ int send_mining_notify(T_DATUM_CLIENT_DATA *c, bool clean, bool quickdiff, bool 
 	datum_socket_send_string_to_client(c, s);
 	if (stratum_job_is_blake2b(j)) {
 		tdiff = floorPoT(m->last_sent_diff);
-		if (!datum_stratum_job_blake2b_commitment(j, tdiff, blake2b_commitment, blake2b_sia_coinb1)) {
+		if (!datum_stratum_job_blake2b_commitment(j, (int)cbselect, tdiff, blake2b_commitment, blake2b_sia_coinb1)) {
 			return -1;
 		}
 		for(i=0;i<(int)sizeof(blake2b_sia_coinb1);i++) {
@@ -2199,13 +2206,14 @@ bool datum_stratum_job_blake2b_commitment_from_txn(const T_DATUM_STRATUM_JOB *s,
 		td->xor_key, td->merge_mining_rhs);
 }
 
-bool datum_stratum_job_blake2b_commitment(T_DATUM_STRATUM_JOB *s, unsigned char pot, unsigned char *commitment, unsigned char *sia_coinb1) {
+bool datum_stratum_job_blake2b_commitment(T_DATUM_STRATUM_JOB *s, int coinbase_index, unsigned char pot, unsigned char *commitment, unsigned char *sia_coinb1) {
 	unsigned char cb_txn[MAX_COINBASE_TXN_SIZE_BYTES];
 	const T_DATUM_STRATUM_COINBASE *cb;
 	size_t cb_len;
 	
 	if (!s || !commitment) return false;
-	cb = &s->coinbase[0];
+	if (coinbase_index < 0 || coinbase_index >= MAX_COINBASE_TYPES) return false;
+	cb = &s->coinbase[coinbase_index];
 	if (cb->coinb1_len < 1) return false;
 	cb_len = (size_t)cb->coinb1_len + 12 + (size_t)cb->coinb2_len;
 	if (cb_len > sizeof(cb_txn)) return false;
@@ -2249,7 +2257,7 @@ void datum_stratum_job_refresh_blake2b(T_DATUM_STRATUM_JOB *s) {
 	s->blake2b_time_on_wire = time_on_wire;
 
 	// Job-level H2 keeps the 0xFF placeholder; notify/submit rebuild with the client's floorPoT.
-	datum_stratum_job_blake2b_commitment(s, 0xFF, s->blake2b_commitment, s->blake2b_sia_coinb1);
+	datum_stratum_job_blake2b_commitment(s, s->blake2b_coinbase_index, 0xFF, s->blake2b_commitment, s->blake2b_sia_coinb1);
 	datum_blake2b_sia_prevhash(s->blake2b_sia_prevhash, block_template->previousblockhash_bin);
 
 	for(i=0;i<32;i++) {
@@ -2347,6 +2355,9 @@ void update_stratum_job(T_DATUM_TEMPLATE_DATA *block_template, bool new_block, i
 	// calculate the stratum merkle branches and store them on this job
 	stratum_calculate_merkle_branches(s);
 
+	// job slots are reused; the payout coinbase is selected when the
+	// coinbaser generates this job's coinbases, not inherited from the last one
+	s->blake2b_coinbase_index = 0;
 	datum_stratum_job_refresh_blake2b(s);
 	
 	// update the latest empty data before we update the global job

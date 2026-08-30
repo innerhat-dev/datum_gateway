@@ -760,6 +760,14 @@ void generate_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool empty_o
 		}
 	}
 
+	// A BLAKE2b job commits every client to one coinbase, so commit to the
+	// one that carries the pool's payout outputs when there are any. Type 4
+	// has the largest budget, and the Sia hasher never parses the Bitcoin
+	// coinbase, so the miner-specific layouts of the other types do not
+	// matter here. Type 0 pays the pool address alone and remains the
+	// fallback until the coinbaser answers.
+	s->blake2b_coinbase_index = empty_only ? 0 : 4;
+	
 	datum_stratum_job_refresh_blake2b(s);
 }
 
