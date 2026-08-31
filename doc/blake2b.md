@@ -1,25 +1,26 @@
 # Mining BLAKE2b with the DATUM Gateway
 
 This covers the gateway side of the Bitcoin Knots BLAKE2b proof-of-work
-change: which build, what goes in the config, how the headline gets into
-your coinbase, and what to watch. The node side (installing the Knots
+change: which build, what goes in the config, and what to watch. The node side (installing the Knots
 release, the fork height, what a node that does not upgrade does) is in
 the Knots operator notes,
 https://github.com/bitcoinknots/bitcoin/discussions/379, and the guide
 in bitcoinknots/bitcoin#378.
 
 Checked against this repository at commit 2fea7e5 and Bitcoin Knots
-v29.4.1.knots20260508rc3 on testnet4; the rc4 parameters below are read
-from the rc4 source. The rc4 release notes win over anything here.
+v29.4.1.knots20260508rc4, on testnet4 and on mainnet across the fork
+itself. Mainnet activated at height 961640 on 2026-08-30, so this now
+describes joining a running chain rather than preparing for the fork.
 
 ## Which gateway
 
 Only this fork (innerhat-dev/datum_gateway, known as
 justinfilip/datum_gateway until the account was renamed on 2026-08-29)
 produces BLAKE2b work. The
-OCEAN DATUM Gateway release does not, and there is no BLAKE2b pool yet,
-so this is solo mining: the whole reward of any block you find goes to
-`mining.pool_address`.
+OCEAN DATUM Gateway release does not. Pooled BLAKE2b mining exists
+(OCEAN has mined blocks on this chain) but no public endpoint is
+documented, so this guide covers solo mining: the whole reward of any
+block you find goes to `mining.pool_address`.
 
 Build from `master`. The banner printed at startup shows the git commit;
 `--version` shows only the protocol version. Keep the binary apart from
@@ -30,12 +31,13 @@ or leave it in the build directory) and do not `make install` over one.
 
 - Bitcoin Knots v29.4.1.knots20260508rc4. It is the first build that
   runs mainnet, and it moves testnet4's fork height as well (below).
-- `blake2b_headline=<string>` in bitcoin.conf. The node refuses to start
-  without it ("This version requires blake2b_headline set manually").
-  Until the real headline is published use a placeholder; the value only
-  matters for the fork block itself. No quotes around the value: the
-  config parser keeps them, and a node whose headline is
-  `"Some Headline"` with the quotes rejects every real fork block.
+- `blake2b_headline=8-30 NYPost Deride And Conquer` in bitcoin.conf,
+  exactly those bytes, no quotes: the config parser keeps quotation
+  marks, and a mismatched value makes the node reject the real fork
+  block during sync. rc4 refuses to start without the setting.
+  bitcoinknots/bitcoin#385, open as of 2026-08-31, hardcodes the
+  headline and retires the option, so a build carrying it needs no
+  headline configuration and ignores a leftover line.
 - RPC access for the gateway, `blocknotify=killall -USR1 datum_gateway`
   (or the `/NOTIFY` endpoint), and the `blockmaxsize`/`blockmaxweight`
   reservation from the README. None of that changes for BLAKE2b.
@@ -51,7 +53,7 @@ The example config in `doc/` works with these settings:
 	"mining": {
 		"pool_address": "bc1q...",
 		"coinbase_tag_primary": "DATUM Gateway",
-		"coinbase_tag_secondary": "PUT THE HEADLINE HERE",
+		"coinbase_tag_secondary": "your tag",
 		"pow_algorithm": "auto"
 	},
 	"api": { "listen_addr": "127.0.0.1", "listen_port": 7152, "admin_password": "...", "modify_conf": false },
@@ -85,35 +87,23 @@ restart.
 
 ## The headline
 
-The fork block, and only the fork block, must carry a news headline in
-its coinbase. The node checks it with a byte search of the coinbase
-scriptSig (`validation.cpp`, reject reason `bad-headline`): the exact
-bytes have to appear in it, contiguous, and nothing about their position
-matters.
+The fork block, and only the fork block, had to carry a news headline
+in its coinbase: the node checks the block at exactly the fork height
+for the configured bytes with a substring search of the coinbase
+scriptSig (`validation.cpp`, reject reason `bad-headline`). Mainnet's
+961640 was mined on 2026-08-30 carrying
+`8-30 NYPost Deride And Conquer`, so no block anyone mines now needs
+the headline, and `coinbase_tag_secondary` is ordinary coinbase text —
+the explorers name your blocks by it.
 
-The gateway does not insert the headline for you. `getblocktemplate`
-publishes it (`coinbaseaux.blake2b_headline`, hex) but the gateway only
-reads that key to recognize a BLAKE2b template. The way to get the bytes
-into your coinbase is `mining.coinbase_tag_secondary`, which the
-coinbaser writes into the scriptSig as-is.
-
-- Copy and paste the published string. Do not retype it. One character
-  off and the block you find is invalid to every node.
-- ASCII only. Other text around it is fine (the primary tag, for
-  instance) since the check is a substring match.
-- Length. The config check allows 60 characters per tag and 88 combined,
-  but the coinbaser has 84 bytes for both tags together and trims the
-  secondary tag to fit without a warning (`datum_coinbaser.c`,
-  `MAX_COINBASE_TAG_SPACE`). Keep primary + secondary at 84 or under, or
-  the end of the headline is missing from the block and it fails
-  `bad-headline`. A short primary tag keeps you clear of it.
-- Set it, restart the gateway, and read it back from the status page's
-  "Secondary/Miner Tag" row before the node reaches the fork height.
-  Once the node hands out the fork-height template, work built with the
-  wrong tag is wasted.
-
-After the fork block the tag is ordinary coinbase text again and you can
-change it back.
+What survives of the old procedure: a node still validates 961640
+against its configured `blake2b_headline` during initial sync (see
+"Node" above), and a regtest rehearsal of a fork height needs the tag
+to carry whatever headline the node is configured with. For a
+rehearsal, keep primary plus secondary tag at 84 bytes or under: the
+coinbaser trims the secondary tag past that without a warning
+(`datum_coinbaser.c`, `MAX_COINBASE_TAG_SPACE`), and a trimmed
+headline fails `bad-headline`.
 
 ## Miners
 
@@ -149,16 +139,15 @@ height:
   height N`.
 - A BLAKE2b miner starts getting shares accepted.
 
-When a block is found, `bitcoin-cli getblockheader <hash>` on rc3 shows
+When a block is found, `bitcoin-cli getblockheader <hash>` on rc4 shows
 `header_version` 2, and `getblock <hash> 2` shows your tags in the
 coinbase.
 
 ## Test on testnet4 first
 
-rc4 forks testnet4 at height 150308 (rc3 had 150027; blocks between
-the two heights are SHA256d again, so an rc3 node needs rc4 and rewinds
-on its own at startup). The fork block needs its own headline, and its
-difficulty is the previous SHA256d block's shifted 20 bits; testnet4's
+rc4 forked testnet4 at height 150308 on 2026-08-30 (rc3 had 150027;
+blocks between the two heights are SHA256d again, so an rc3 node needs
+rc4 and rewinds on its own at startup). testnet4's
 20-minute minimum-difficulty rule applies to BLAKE2b blocks too. The
 same gateway config works with `chain=testnet4` on the node, the
 testnet4 RPC port (48332 by default) in `rpcurl`, and a testnet address
@@ -166,41 +155,34 @@ in `pool_address`.
 
 ## Mainnet
 
-From the rc4 source (`src/kernel/chainparams.cpp`), 2026-08-29. The
-rc4 release notes win over anything here.
+The fork activated at height 961640 on 2026-08-30. From the rc4 source
+and the live chain:
 
 - Release: `v29.4.1.knots20260508rc4`, the first build that runs
   mainnet.
-- Fork height: 961640, the block after the BIP110 chain's tip at
-  961639 (`00000000000000000001bbc439e13f749dca850d32c7a2834165338713027e65`).
-- Headline for 961640: `8-30 NYPost Deride And Conquer` (30 bytes,
-  published 2026-08-30 about 05:00 UTC). Unquoted in bitcoin.conf, exact
-  bytes in `coinbase_tag_secondary`. It only matters for block 961640.
-- Fork-block difficulty: the 961639 target shifted 22 bits, so about
-  3.0e7 from that block's 1.27e14. That is roughly an 11-minute block
-  at 190 TH/s, 22 minutes at 100, 4 minutes at 500. The first retarget,
-  at 963648, will lower it further, since the window spans the slow
-  weeks before the fork.
+- Fork block: 961640
+  (`0000000000000050c1e5f69672f459293be14f46e5a494e7a8c8541396f18eeb`),
+  mined 06:14 UTC at difficulty 3.0e7, the 961639 target shifted 22
+  bits. Blocks ran a few minutes apart on the first day; the first
+  retarget, at 963648, moves difficulty toward ten-minute pacing.
+- Headline: covered above. A node wants it in bitcoin.conf; a miner no
+  longer needs it anywhere.
 - RDTS (BIP110) rules apply from 961640 until September 1, 2027.
-- SHA256d hardware: off once the height is locked. A SHA256d block at
-  or after the fork height is invalid.
-- Until the Knots maintainers declare the chain final, treat blocks
-  after the fork height as provisional when accepting payments.
+- SHA256d hardware: a SHA256d block at or after 961640 is invalid.
+- Absolute hashrate here is a small fraction of what SHA256d Bitcoin
+  carries, so deep reorgs cost less than you are used to. Give
+  payments more confirmations than you would elsewhere.
 
 Nothing in the gateway config changes between testnet4 and mainnet
 except the node's RPC port, the address, and the tag.
 
-## Fork night, in order
+## Joining now, in order
 
-1. Node on rc4 with `blake2b_headline=PLACEHOLDER`, started, sitting at
-   961639.
+1. Node on rc4 with the headline line in bitcoin.conf, synced past
+   961640.
 2. Gateway from this repository, config as above, started, with a
    `NEW NETWORK BLOCK` line in the log or a job on the dashboard.
-3. Headline published: paste it into `blake2b_headline` and
-   `coinbase_tag_secondary`, restart the node, then the gateway. Read
-   the tag back from the status page.
-4. Point the hardware at the gateway.
-5. Watch for the first BLAKE2b template, then for accepted shares.
+3. Point the hardware at the gateway and watch for accepted shares.
 
 ## If something is wrong
 
@@ -209,6 +191,5 @@ except the node's RPC port, the address, and the tag.
 | Node will not start: "requires blake2b_headline set manually" | No `blake2b_headline=` in bitcoin.conf |
 | Startup log: "DATUM server connection could not be established" | `pooled_mining_only` still `true` with an empty `pool_host`; harmless in solo mode |
 | Gateway cannot fetch templates from the height on; node debug.log shows error -8 | `pow_algorithm` set to `sha256d` |
-| Block submitted, node says `bad-headline` | Wrong tag bytes, or the tag was trimmed (primary + secondary over 84) |
-| BLAKE2b miner gets jobs, every share rejected | Node still below the fork height; the gateway is serving SHA256d work |
+| BLAKE2b miner gets jobs, every share rejected | Node not yet synced past the fork height; the gateway is serving SHA256d work |
 | Miner will not connect | `.local` hostname in the miner; use the IP |
