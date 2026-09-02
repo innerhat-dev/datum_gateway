@@ -249,8 +249,8 @@ static void datum_blake2b_client_pot_commitment_tests(void) {
        job.coinbase[0].coinb1_bin[4] = 0xFF;
        job.target_pot_index = 4;
 
-       datum_test(datum_stratum_job_blake2b_commitment(&job, 0xFF, c_ff, sia_ff));
-       datum_test(datum_stratum_job_blake2b_commitment(&job, 14, c_pot, sia_pot));
+       datum_test(datum_stratum_job_blake2b_commitment(&job, 0, 0xFF, c_ff, sia_ff));
+       datum_test(datum_stratum_job_blake2b_commitment(&job, 0, 14, c_pot, sia_pot));
        datum_test(memcmp(c_ff, c_pot, 32) != 0);
        datum_test(memcmp(sia_ff, sia_pot, 39) != 0);
 
@@ -261,6 +261,61 @@ static void datum_blake2b_client_pot_commitment_tests(void) {
        cb_txn[job.target_pot_index] = 14;
        datum_test(datum_stratum_job_blake2b_commitment_from_txn(&job, cb_txn, cb_len, c_from_txn));
        datum_test(!memcmp(c_from_txn, c_pot, 32));
+}
+
+static void datum_blake2b_payout_coinbase_commitment_tests(void) {
+       T_DATUM_TEMPLATE_DATA tdata;
+       T_DATUM_STRATUM_JOB job;
+       unsigned char c_empty[32], c_payout[32], c_from_txn[32];
+       unsigned char cb_txn[64];
+       size_t cb_len;
+
+       memset(&tdata, 0, sizeof(tdata));
+       memset(&job, 0, sizeof(job));
+       tdata.header_version = 2;
+       tdata.version = 0x20000000;
+       tdata.height = 12345;
+       tdata.bits_uint = 0x1d00ffff;
+       tdata.curtime = 1000;
+       job.block_template = &tdata;
+       job.blake2b_time_on_wire = 1000;
+       job.target_pot_index = 4;
+
+       /* Type 0 is the pool-address-only coinbase; type 4 carries the payouts. */
+       job.coinbase[0].coinb1_len = 20;
+       job.coinbase[0].coinb2_len = 8;
+       memset(job.coinbase[0].coinb1_bin, 0x11, 20);
+       memset(job.coinbase[0].coinb2_bin, 0x22, 8);
+       job.coinbase[4].coinb1_len = 24;
+       job.coinbase[4].coinb2_len = 16;
+       memset(job.coinbase[4].coinb1_bin, 0x33, 24);
+       memset(job.coinbase[4].coinb2_bin, 0x44, 16);
+
+       /* The commitment follows the requested coinbase. */
+       datum_test(datum_stratum_job_blake2b_commitment(&job, 0, 0xFF, c_empty, NULL));
+       datum_test(datum_stratum_job_blake2b_commitment(&job, 4, 0xFF, c_payout, NULL));
+       datum_test(memcmp(c_empty, c_payout, 32) != 0);
+
+       /* And matches one built from type 4's raw transaction. */
+       cb_len = (size_t)job.coinbase[4].coinb1_len + 12 + (size_t)job.coinbase[4].coinb2_len;
+       memcpy(cb_txn, job.coinbase[4].coinb1_bin, job.coinbase[4].coinb1_len);
+       memset(cb_txn + job.coinbase[4].coinb1_len, 0, 12);
+       memcpy(cb_txn + job.coinbase[4].coinb1_len + 12, job.coinbase[4].coinb2_bin, job.coinbase[4].coinb2_len);
+       cb_txn[job.target_pot_index] = 0xFF;
+       datum_test(datum_stratum_job_blake2b_commitment_from_txn(&job, cb_txn, cb_len, c_from_txn));
+       datum_test(!memcmp(c_from_txn, c_payout, 32));
+
+       /* The job-level freeze honors the selected index. */
+       job.blake2b_coinbase_index = 4;
+       datum_stratum_job_refresh_blake2b(&job);
+       datum_test(!memcmp(job.blake2b_commitment, c_payout, 32));
+       job.blake2b_coinbase_index = 0;
+       datum_stratum_job_refresh_blake2b(&job);
+       datum_test(!memcmp(job.blake2b_commitment, c_empty, 32));
+
+       /* Out-of-range indexes are refused rather than read out of bounds. */
+       datum_test(!datum_stratum_job_blake2b_commitment(&job, -1, 0xFF, c_empty, NULL));
+       datum_test(!datum_stratum_job_blake2b_commitment(&job, MAX_COINBASE_TYPES, 0xFF, c_empty, NULL));
 }
 
 static void datum_block_coinbase_witness_tests(void) {
@@ -865,6 +920,7 @@ void datum_stratum_tests(void) {
 	datum_gbt_rules_blake2b_tests();
     datum_blake2b_coinbase_limit_tests();
     datum_blake2b_client_pot_commitment_tests();
+    datum_blake2b_payout_coinbase_commitment_tests();
     datum_blake2b_refresh_time_offset_tests();
     datum_block_coinbase_witness_tests();
     datum_blake2b_share_ntime_tests();
