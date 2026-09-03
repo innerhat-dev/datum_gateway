@@ -146,6 +146,8 @@ Once you have everything running, you can point miners at the Gateway.
 
 ### BLAKE2b header v2 (Knots POW change)
 
+Setup guide, including the headline and solo-mode settings: [doc/blake2b.md](doc/blake2b.md).
+
 Header-v2 jobs are meant for BLAKE2b and BLAKE2b-sia miners (Sia-style Stratum work), not only one model.
 
 `getblocktemplate` stays BIP22. The planned Knots signal is a required `!blake2b` entry in `rules`. The Gateway always requests `blake2b` unless you force `sha256d`, and treats `!blake2b` (or `blake2b`) in `rules` as header-v2.
