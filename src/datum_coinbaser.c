@@ -779,16 +779,27 @@ int datum_coinbaser_v2_parse(T_DATUM_STRATUM_JOB *s, unsigned char *coinbaser, i
 	int slen = 0;
 	int cbvalid = 0;
 	int datum_id;
+	static bool coinbaser_using_empty = false;
 	
 	if (!coinbaser) {
-		DLOG_WARN("Coinbaser is NULL Using default/empty");
+		if (!coinbaser_using_empty) {
+			DLOG_WARN("Coinbaser is NULL Using default/empty");
+			coinbaser_using_empty = true;
+		} else {
+			DLOG_DEBUG("Coinbaser is NULL Using default/empty");
+		}
 		s->available_coinbase_outputs_count = 0;
 		return 0;
 	}
 	
 	if (cblen < 9) {
 		// 0 outputs possible
-		DLOG_WARN("Coinbaser length is invalid (too short). Using default/empty");
+		if (!coinbaser_using_empty) {
+			DLOG_WARN("Coinbaser length is invalid (too short). Using default/empty");
+			coinbaser_using_empty = true;
+		} else {
+			DLOG_DEBUG("Coinbaser length is invalid (too short). Using default/empty");
+		}
 		s->available_coinbase_outputs_count = 0;
 		return 0;
 	}
@@ -835,6 +846,7 @@ int datum_coinbaser_v2_parse(T_DATUM_STRATUM_JOB *s, unsigned char *coinbaser, i
 	
 	s->datum_coinbaser_id = datum_id;
 	s->available_coinbase_outputs_count = cbvalid;
+	coinbaser_using_empty = false;
 	if (coinbaser && must_free) free(coinbaser);
 	return cbvalid;
 }

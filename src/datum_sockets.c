@@ -397,6 +397,31 @@ void clean_thread_data(T_DATUM_THREAD_DATA *d, T_DATUM_SOCKET_APP *app) {
 	d->app = app;
 }
 
+static uint64_t max_clients_reject_count = 0;
+static uint64_t max_clients_reject_last_tsms = 0;
+static bool max_clients_reject_noted = false;
+
+static void log_max_clients_reject(const bool all_threads_full, const int max_clients) {
+	const uint64_t now = current_time_millis();
+	max_clients_reject_count++;
+	if (!max_clients_reject_noted) {
+		if (all_threads_full) {
+			DLOG_INFO("All threads have max clients! Rejecting connection. :(");
+		} else {
+			DLOG_INFO("Sum of clients on all threads at configured global maximum (%d) Rejecting connection. :(", max_clients);
+		}
+		max_clients_reject_noted = true;
+		max_clients_reject_last_tsms = now;
+		max_clients_reject_count = 0;
+		return;
+	}
+	if ((now - max_clients_reject_last_tsms) > 5000) {
+		DLOG_INFO("Rejecting connection (%llu since last noted)", (unsigned long long)max_clients_reject_count);
+		max_clients_reject_last_tsms = now;
+		max_clients_reject_count = 0;
+	}
+}
+
 int assign_to_thread(T_DATUM_SOCKET_APP *app, int fd) {
 	// Only one thread will be calling this function for a particular "app"
 	// under the current design.  Safe to assume that multiple clients will
@@ -463,12 +488,12 @@ int assign_to_thread(T_DATUM_SOCKET_APP *app, int fd) {
 		}
 		
 		if (tid == -1) {
-			DLOG_INFO("All threads have max clients! Rejecting connection. :(");
+			log_max_clients_reject(true, 0);
 			return 0;
 		}
 		
 		if (tc >= app->max_clients) {
-			DLOG_INFO("Sum of clients on all threads at configured global maximum (%d) Rejecting connection. :(", app->max_clients);
+			log_max_clients_reject(false, app->max_clients);
 			return 0;
 		}
 	}

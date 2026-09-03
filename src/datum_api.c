@@ -1904,7 +1904,6 @@ void *datum_api_thread(void *ptr) {
 	struct MHD_Daemon *daemon;
 	
 	if (!datum_config.api_listen_port) {
-		DLOG_INFO("No API port configured. API disabled.");
 		return NULL;
 	}
 	
@@ -1933,7 +1932,7 @@ int datum_api_init(void) {
 	pthread_t pthread_datum_api_thread;
 	
 	if (!datum_config.api_listen_port) {
-		DLOG_INFO("INFO: No API port configured. API disabled.");
+		DLOG_INFO("No API port configured. API disabled.");
 		return 0;
 	}
 	pthread_create(&pthread_datum_api_thread, NULL, datum_api_thread, NULL);

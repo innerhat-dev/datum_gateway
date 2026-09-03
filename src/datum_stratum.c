@@ -283,7 +283,11 @@ void *datum_stratum_v1_socket_server(void *arg) {
 			if (stratum_latest_empty_complete_count >= app->datum_active_threads) {
 				// we are done!
 				stratum_latest_empty_ready_for_full = true;
-				DLOG_INFO("Empty work send completed. Sent to %llu clients across %llu threads", (unsigned long long)stratum_latest_empty_sent_count, (unsigned long long)stratum_latest_empty_complete_count);
+				if (stratum_latest_empty_sent_count > 0) {
+					DLOG_INFO("Empty work send completed. Sent to %llu clients across %llu threads", (unsigned long long)stratum_latest_empty_sent_count, (unsigned long long)stratum_latest_empty_complete_count);
+				} else {
+					DLOG_DEBUG("Empty work send completed. Sent to %llu clients across %llu threads", (unsigned long long)stratum_latest_empty_sent_count, (unsigned long long)stratum_latest_empty_complete_count);
+				}
 			}
 		}
 		pthread_rwlock_unlock(&stratum_global_latest_empty_stat);
@@ -348,7 +352,19 @@ double datum_stratum_v1_est_total_th_sec(void) {
 }
 
 void datum_stratum_v1_socket_thread_client_closed(T_DATUM_CLIENT_DATA *c, const char *msg) {
+	T_DATUM_MINER_DATA * const m = c->app_client_data;
+	
 	DLOG_DEBUG("Stratum client connection closed. (%s)", msg);
+	
+	if (m && m->subscribed) {
+		m->subscribed = false;
+		const int nclients = datum_stratum_v1_global_subscriber_count();
+		if (m->useragent[0]) {
+			DLOG_INFO("Client dropped from %s (%s): %d client%s", c->rem_host, m->useragent, nclients, (nclients != 1) ? "s" : "");
+		} else {
+			DLOG_INFO("Client dropped from %s: %d client%s", c->rem_host, nclients, (nclients != 1) ? "s" : "");
+		}
+	}
 }
 
 void datum_stratum_v1_socket_thread_client_new(T_DATUM_CLIENT_DATA *c) {
@@ -1938,6 +1954,14 @@ int client_mining_subscribe(T_DATUM_CLIENT_DATA *c, uint64_t id, json_t *params_
 	
 	// mark them as subscribed so that notifies actually work
 	m->subscribed = true;
+	{
+		const int nclients = datum_stratum_v1_global_subscriber_count();
+		if (m->useragent[0]) {
+			DLOG_INFO("New client added from %s (%s): %d client%s", c->rem_host, m->useragent, nclients, (nclients != 1) ? "s" : "");
+		} else {
+			DLOG_INFO("New client added from %s: %d client%s", c->rem_host, nclients, (nclients != 1) ? "s" : "");
+		}
+	}
 	
 	// clean work on connect, not quickdiff, doesn't matter if new block or not (don't need empty work speedup on connect)
 	send_mining_notify(c,true,false,false);
