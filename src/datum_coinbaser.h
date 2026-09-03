@@ -36,6 +36,17 @@
 #ifndef _DATUM_COINBASE_H_
 #define _DATUM_COINBASE_H_
 
+#include <stdbool.h>
+#include <stddef.h>
+
+// Bytes available to the two coinbase tags together, separator included;
+// generate_coinbase_input() cuts the secondary tag to fit.
+#define MAX_COINBASE_TAG_SPACE 86
+
+size_t datum_coinbaser_tag_bytes(const char *primary, const char *secondary, bool apply_trim, unsigned char *out, size_t out_sz);
+int generate_coinbase_input(int height, char *cb, int *target_pot_index);
+void datum_coinbaser_tests(void);
+
 int datum_coinbaser_init(void);
 void generate_coinbase_txns_for_stratum_job_subtypebysize(T_DATUM_STRATUM_JOB *s, int coinbase_index, int remaining_size, bool space_for_en_in_coinbase, int *cb1idx, int *cb2idx, bool special_coinb1);
 void generate_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool empty_only);

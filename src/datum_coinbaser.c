@@ -58,13 +58,44 @@ CURL *coinbaser_curl = NULL;
 
 const char *cbstart_hex = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff"; // 82 len hex, 41 bytes
 
-#define MAX_COINBASE_TAG_SPACE 86 // leaves space for BIP34 height, extranonces, datum prime tag, etc.
+// MAX_COINBASE_TAG_SPACE (datum_coinbaser.h) leaves space for BIP34 height, extranonces, datum prime tag, etc.
+
+// The tag bytes generate_coinbase_input() puts in the scriptSig: primary, 0x0F,
+// secondary. With apply_trim the secondary is cut the way that function cuts
+// it when the two do not fit MAX_COINBASE_TAG_SPACE. Keep the two in step.
+size_t datum_coinbaser_tag_bytes(const char *primary, const char *secondary, bool apply_trim, unsigned char *out, size_t out_sz) {
+	int len0 = primary ? (int)strlen(primary) : 0;
+	int len1 = secondary ? (int)strlen(secondary) : 0;
+	int k = len0 + len1 + 2;
+	size_t n = 0;
+	
+	if (!len1) {
+		k--;
+		if (!len0) k--;
+	}
+	if (apply_trim && k > MAX_COINBASE_TAG_SPACE) {
+		const int excess = k - MAX_COINBASE_TAG_SPACE;
+		if (len1 > excess) {
+			len1 -= excess;
+		} else {
+			len1 = 0;
+		}
+	}
+	if ((size_t)(len0 + 1 + len1) > out_sz) return 0;
+	
+	memcpy(&out[n], primary, len0); n += len0;
+	if (len1) {
+		out[n++] = 0x0F;
+		memcpy(&out[n], secondary, len1); n += len1;
+	}
+	return n;
+}
 
 int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 	int cb_input_sz = 0;
-	int tag_len[2] = { 0, 0 };
+	unsigned char tagbuf[256];
+	size_t n;
 	int k, m, i;
-	int excess;
 	bool datum_active = false;
 	
 	// let's figure out our coinbase tags w/BIP34 height
@@ -75,40 +106,16 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 	
 	// Handle coinbase tagging
 	// The first push after the height should be:
-	// PUSHBYTES X, Primary tag, 0x0F, Secondary tag, 0x0F, Tertiary tag, 0x00
+	// PUSHBYTES X, Primary tag, 0x0F, Secondary tag, 0x00
 	// We should then push a unique entropy tag (push + 2 bytes = 3 bytes)
-	if (!datum_active) {
-		tag_len[0] = strlen(datum_config.mining_coinbase_tag_primary);
-	} else {
-		tag_len[0] = strlen(datum_config.override_mining_coinbase_tag_primary);
-	}
-	tag_len[1] = strlen(datum_config.mining_coinbase_tag_secondary);
-	k = tag_len[0] + tag_len[1] + 2;
-	if (!tag_len[1]) {
-		k--;
-		if (!tag_len[0]) {
-			k--;
-		}
-	}
+	// The tag layout and the trim that fits it to MAX_COINBASE_TAG_SPACE live
+	// in datum_coinbaser_tag_bytes, shared with the template-time warning.
+	n = datum_coinbaser_tag_bytes(datum_active ? datum_config.override_mining_coinbase_tag_primary : datum_config.mining_coinbase_tag_primary, datum_config.mining_coinbase_tag_secondary, true, tagbuf, sizeof(tagbuf));
+	k = n ? (int)n + 1 : 0; // the terminating null is inside the push
 	
 	if (k > MAX_COINBASE_TAG_SPACE) {
-		// something still needs truncating
-		excess = k - MAX_COINBASE_TAG_SPACE;
-		if (tag_len[1] > excess) {
-			// truncating tag1 is enough to cover us
-			tag_len[1] -= excess;
-			k = MAX_COINBASE_TAG_SPACE;
-		} else {
-			// not enough, so need to remove this tag entirely
-			if (tag_len[1]) {
-				tag_len[1] = 0;
-				k-=tag_len[1]+1;
-			}
-		}
-	}
-	
-	if (k > MAX_COINBASE_TAG_SPACE) {
-		// one tag should never exceed 64 bytes, so we're going to panic here.
+		// only the secondary tag is trimmed, so a pool-override primary past
+		// MAX_COINBASE_TAG_SPACE-2 bytes still cannot fit. panic here.
 		DLOG_FATAL("Could not fit coinbase primary tag alone somehow. This is probably a bug. Panicking. :(");
 		panic_from_thread(__LINE__);
 		sleep(1000000);
@@ -124,35 +131,11 @@ int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 			uchar_to_hex(&cb[i], 0x4C); i+=2; cb_input_sz++;
 			uchar_to_hex(&cb[i], (unsigned char)k); i+=2; cb_input_sz++;
 		}
-		
-		if (tag_len[0]) {
-			if (datum_active) {
-				for(m=0;m<tag_len[0];m++) {
-					uchar_to_hex(&cb[i], (unsigned char)datum_config.override_mining_coinbase_tag_primary[m]); i+=2; cb_input_sz++;
-				}
-			} else {
-				for(m=0;m<tag_len[0];m++) {
-					uchar_to_hex(&cb[i], (unsigned char)datum_config.mining_coinbase_tag_primary[m]); i+=2; cb_input_sz++;
-				}
-			}
-			if (!tag_len[1]) {
-				uchar_to_hex(&cb[i], 0x00); i+=2; cb_input_sz++;
-			} else {
-				uchar_to_hex(&cb[i], 0x0F); i+=2; cb_input_sz++;
-			}
-		} else {
-			// we wouldn't be here if there wasn't at least one other
-			if (tag_len[1]) {
-				uchar_to_hex(&cb[i], 0x0F); i+=2; cb_input_sz++;
-			}
+	
+		for(m=0;m<(int)n;m++) {
+			uchar_to_hex(&cb[i], tagbuf[m]); i+=2; cb_input_sz++;
 		}
-		
-		if (tag_len[1]) {
-			for(m=0;m<tag_len[1];m++) {
-				uchar_to_hex(&cb[i], (unsigned char)datum_config.mining_coinbase_tag_secondary[m]); i+=2; cb_input_sz++;
-			}
-			uchar_to_hex(&cb[i], 0x00); i+=2; cb_input_sz++;
-		}
+		uchar_to_hex(&cb[i], 0x00); i+=2; cb_input_sz++;
 	} else {
 		// we'll push a null char to be consistent, and to not parse the UID as if it were a pool name
 		uchar_to_hex(&cb[i], 0x01); i+=2; cb_input_sz++;
