@@ -60,6 +60,7 @@
 #include "datum_api.h"
 #include "datum_coinbaser.h"
 #include "datum_protocol.h"
+#include "datum_hashrate_hist.h"
 
 const char *datum_gateway_config_filename = NULL;
 
@@ -231,6 +232,8 @@ int main(const int argc, const char * const * const argv) {
 	// Note: The stratum thread will wait for a template to be available for some time before panicking.
 	DLOG_DEBUG("Starting Stratum v1 server");
 	pthread_create(&pthread_datum_stratum_v1, NULL, datum_stratum_v1_socket_server, NULL);
+
+	datum_hashrate_hist_init(datum_config.mining_hashrate_history_file);
 	
 	// Randomize the reconnect delay from 5 to 20 seconds to prevent hammering the server
 	next_reconnect_attempt_ms = ( 5000 + (rand() % 15001) );

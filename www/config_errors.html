@@ -6,39 +6,7 @@
 	<link rel="icon" type="image/x-icon" href="/assets/icons/favicon.ico">
 	<link rel="stylesheet" type="text/css" href="./assets/style.css">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<style>
-		.table-wrapper {
-			justify-content: center;
-		}
-		
-		.table-container {
-			max-width: 800px;
-		}
-		
-		button {
-			background-color: #444;
-			color: #3498db;
-			padding: 10px 20px;
-			margin: 5px;
-			border-radius: 5px;
-			text-decoration: none;
-			transition: background-color 0.3s, color 0.3s;
-			font-weight: bold;
-			font-size: large;
-		}
-		
-		.err {
-			border-bottom: 1px solid #444;
-			padding: 10px;
-			background-color: #2a2a3b;
-			white-space: nowrap;
-		}
-		
-		.err:last-child {
-			border-bottom: none;
-		}
-	</style>
-</head>
+	</head>
 <body>
 	<div class="container">
 		<div class="header">
@@ -46,7 +14,7 @@
 		</div>
 		<div class="menu-container">
 			<a href="/">Status</a>
-			<a href="/config" style="background-color: darkslategrey;">Config</a>
+			<a href="/config" class="active">Config</a>
 			<a href="/clients">Clients</a>
 			<a href="/threads">Threads</a>
 			<a href="/coinbaser">Coinbaser</a>
@@ -54,9 +22,7 @@
 	</div>
 	
 	<div class="tables-container">
-		<script>
-			document.write('<div style="margin-top: 20px; text-align: center;"><button onclick="javascript:history.back(); return false;">Go Back</button></div>')
-		</script>
+		<div class="actions"><a class="btn" href="/config">Go Back</a></div>
 		
 		<div class="table-wrapper">
 			<div class="table-container">
@@ -65,9 +31,7 @@
 			</div>
 		</div>
 		
-		<script>
-			document.write('<div style="margin-bottom: 20px; text-align: center;"><button onclick="javascript:history.back(); return false;">Go Back</button></div>')
-		</script>
+		<div class="actions"><a class="btn" href="/config">Go Back</a></div>
 	</div>
 </body>
 </html>

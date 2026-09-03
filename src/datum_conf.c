@@ -132,6 +132,9 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "pow_algorithm",			.description = "PoW algorithm: auto (follow GBT rules, including !blake2b), blake2b (BLAKE2b / BLAKE2b-sia header v2), or sha256d",
 		.example_default = true,
 		.required = false, .ptr = datum_config.mining_pow_algorithm,				.default_string[0] = "auto", .max_string_len = sizeof(datum_config.mining_pow_algorithm) },
+	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "hashrate_history_file",	.description = "Path to file for persisting hashrate history samples (empty disables disk persistence)",
+		.example_default = true,
+		.required = false, .ptr = datum_config.mining_hashrate_history_file,		.default_string[0] = "datum_hashrate_history.bin", .max_string_len = sizeof(datum_config.mining_hashrate_history_file) },
 	
 	// API/dashboard
 	{ .var_type = DATUM_CONF_STRING, 	.category = "api",	 		.name = "admin_password",			.description = "API password for actions/changes (username 'admin'; disabled if blank)",

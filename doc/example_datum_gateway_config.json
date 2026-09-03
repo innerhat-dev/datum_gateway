@@ -12,7 +12,8 @@
 		"pool_address": "put your own Bitcoin invoice address here",
 		"coinbase_tag_primary": "DATUM Gateway",
 		"coinbase_tag_secondary": "DATUM User",
-		"pow_algorithm": "auto"
+		"pow_algorithm": "auto",
+		"hashrate_history_file": "datum_hashrate_history.bin"
 	},
 	"api": {
 		"admin_password": "",
