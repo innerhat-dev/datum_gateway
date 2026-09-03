@@ -598,6 +598,8 @@ void *datum_gateway_template_thread(void *args) {
 	
 	char p1[72];
 	p1[0] = 0;
+	uint32_t last_header_version = 0;
+	bool have_last_header_version = false;
 	
 	while(1) {
 		i++;
@@ -629,6 +631,12 @@ void *datum_gateway_template_thread(void *args) {
 					DLOG_DEBUG("height: %lu / value: %"PRIu64, (unsigned long)t->height, t->coinbasevalue);
 					DLOG_DEBUG("--- prevhash: %s", t->previousblockhash);
 					DLOG_DEBUG("--- txn_count: %u / sigops: %u / weight: %u / size: %u", t->txn_count, t->txn_total_sigops, t->txn_total_weight, t->txn_total_size);
+					
+					if (!have_last_header_version || t->header_version != last_header_version) {
+						DLOG_INFO("Template PoW is %s at height %lu", (t->header_version >= 2) ? "BLAKE2b (header v2)" : "SHA256d", (unsigned long)t->height);
+						last_header_version = t->header_version;
+						have_last_header_version = true;
+					}
 					
 					// If the previous block hash changed, or work is no longer valid, we should push clean work
 					const bool new_block = strcmp(t->previousblockhash, p1);
