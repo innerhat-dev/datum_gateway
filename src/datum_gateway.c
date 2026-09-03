@@ -60,6 +60,7 @@
 #include "datum_api.h"
 #include "datum_coinbaser.h"
 #include "datum_protocol.h"
+#include "datum_submitblock.h"
 
 const char *datum_gateway_config_filename = NULL;
 
