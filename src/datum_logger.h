@@ -73,6 +73,8 @@ int datum_logger_queue_msg(const char *func, int level, const char *format, ...)
 #define DLOG_FATAL(format, ...) datum_logger_queue_msg(__func__, DLOG_LEVEL_FATAL, format __VA_OPT__(,) __VA_ARGS__)
 
 int datum_logger_init(void);
+void datum_logger_note_height(uint64_t height);
+void datum_logger_install_logunroll(const char *argv0);
 void datum_logger_config(
 	bool clog_to_file,
 	bool clog_to_console,

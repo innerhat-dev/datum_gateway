@@ -132,6 +132,18 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "pow_algorithm",			.description = "PoW algorithm: auto (follow GBT rules, including !blake2b), blake2b (BLAKE2b / BLAKE2b-sia header v2), or sha256d",
 		.example_default = true,
 		.required = false, .ptr = datum_config.mining_pow_algorithm,				.default_string[0] = "auto", .max_string_len = sizeof(datum_config.mining_pow_algorithm) },
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "blake2b_force_version_high_bit",	.description = "OR 0x80000000 onto the BLAKE2b header/H1 version. Set false if your node already supplies the header-v2 bit and extra OR causes high-hash.",
+		.required = false, .ptr = &datum_config.mining_blake2b_force_version_high_bit, 		.default_bool = true },
+	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "dump_submitblock_path",	.description = "If set, write each submitblock JSON-RPC request to this file (non-blocking). Empty disables.",
+		.required = false, .ptr = datum_config.mining_dump_submitblock_path,			.default_string[0] = "", .max_string_len = sizeof(datum_config.mining_dump_submitblock_path) },
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "validate_shares_on_node",	.description = "Send sampled accepted shares to the local node for structural validation (does not require block-level PoW).",
+		.required = false, .ptr = &datum_config.mining_validate_shares_on_node, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "share_node_check",		.description = "How to ask the node about a share: proposal (GBT mode=proposal, skips PoW) or submitblock (PoW checked first, usually high-hash).",
+		.required = false, .ptr = datum_config.mining_share_node_check,				.default_string[0] = "proposal", .max_string_len = sizeof(datum_config.mining_share_node_check) },
+	{ .var_type = DATUM_CONF_INT, 		.category = "mining", 		.name = "share_node_check_every",	.description = "Validate 1 of every N accepted shares on the node (1 = every share). Real blocks are always submitted separately.",
+		.required = false, .ptr = &datum_config.mining_share_node_check_every, 		.default_int = 16 },
+	{ .var_type = DATUM_CONF_INT, 		.category = "mining", 		.name = "share_node_check_missingzeros",	.description = "If >= 0, only log SHARE lines and node-check shares with missingzeros <= this value (overrides share_node_check_every). -1 = infinity (log all, use every-N). 2 ≈ 4 near-block shares per block; 4 ≈ 16.",
+		.required = false, .ptr = &datum_config.mining_share_node_check_missingzeros, 	.default_int = -1 },
 	
 	// API/dashboard
 	{ .var_type = DATUM_CONF_STRING, 	.category = "api",	 		.name = "admin_password",			.description = "API password for actions/changes (username 'admin'; disabled if blank)",
@@ -175,6 +187,12 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 	{ .var_type = DATUM_CONF_INT, 		.category = "logger",	.name = "log_level_file",				.description = "Minimum log level for log file messages (0=All, 1=Debug, 2=Info, 3=Warn, 4=Error, 5=Fatal)",
 		.example_default = true,
 		.required = false, .ptr = &datum_config.clog_level_file, .default_int = 1 },
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "logger", 		.name = "log_shares",				.description = "Log the result of every incoming share at INFO (level 2): accepted or rejected with reason",
+		.required = false, .ptr = &datum_config.logger_log_shares, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "logger", 		.name = "debug_blake2b_pow",			.description = "Log BLAKE2b H1 (119-byte) payload and final LE hash for each commitment/hash (INFO). For diagnosing high-hash mismatches.",
+		.required = false, .ptr = &datum_config.logger_debug_blake2b_pow, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_BOOL,          .category = "logger",           .name = "console_collapse_job_updates",         .description = "Collapse repeating stratum job update logs into a single line counter to prevent console flooding.",
+		.required = false, .ptr = &datum_config.clog_console_collapse_jobs,          .default_bool = false },
 	
 	// datum options
 	{ .var_type = DATUM_CONF_STRING, 	.category = "datum", 		.name = "pool_host",					.description = "Remote DATUM server host/ip to use for decentralized pooled mining (set to \"\" to disable pooled mining)",

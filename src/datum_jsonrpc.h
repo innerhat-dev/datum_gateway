@@ -68,5 +68,8 @@ char *basic_http_call(CURL *curl, const char *url);
 bool update_rpc_cookie(global_config_t *cfg);
 void update_rpc_auth(global_config_t *cfg);
 json_t *bitcoind_json_rpc_call(CURL *curl, global_config_t *cfg, const char *rpc_req);
+/* Like bitcoind_json_rpc_call, but returns the full JSON object even when result is null
+ * (needed for submitblock / getblocktemplate proposal success). */
+json_t *bitcoind_json_rpc_call_unchecked(CURL *curl, global_config_t *cfg, const char *rpc_req);
 
 #endif

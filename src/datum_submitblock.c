@@ -34,6 +34,10 @@
  */
 
 #include <string.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
@@ -44,12 +48,50 @@
 #include "datum_utils.h"
 #include "datum_conf.h"
 #include "datum_jsonrpc.h"
+#include "datum_submitblock.h"
 
 pthread_mutex_t submitblock_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t submitblock_cond = PTHREAD_COND_INITIALIZER;
 int submit_block_triggered = 0;
 const char *submitblock_ptr = NULL;
 char submitblock_hash[256] = { 0 };
+uint64_t submitblock_height = 0;
+
+void datum_submitblock_note_height(uint64_t height) {
+	submitblock_height = height;
+}
+
+static void datum_dump_submitblock_build_path(char *out, size_t outsz, const char *cfg, const char *hash_hex, uint64_t height)
+{
+	char dir[512];
+	size_t n;
+	const char *slash;
+	const char *last4 = "0000";
+	size_t hl;
+	if (!out || !outsz) return;
+	out[0] = 0;
+	if (!cfg || !cfg[0]) return;
+	n = strlen(cfg);
+	if (cfg[n - 1] == '/') {
+		if (n >= sizeof(dir)) return;
+		memcpy(dir, cfg, n + 1);
+	} else {
+		slash = strrchr(cfg, '/');
+		if (!slash) {
+			strcpy(dir, "./");
+		} else {
+			size_t dlen = (size_t)(slash - cfg + 1);
+			if (dlen >= sizeof(dir)) return;
+			memcpy(dir, cfg, dlen);
+			dir[dlen] = 0;
+		}
+	}
+	if (hash_hex) {
+		hl = strlen(hash_hex);
+		if (hl >= 4) last4 = hash_hex + hl - 4;
+	}
+	snprintf(out, outsz, "%sdatum_submitblock_%" PRIu64 "_%s.json", dir, height, last4);
+}
 
 void preciousblock(CURL *curl, char *blockhash) {
 	json_t *json;
@@ -63,6 +105,73 @@ void preciousblock(CURL *curl, char *blockhash) {
 	return;
 }
 
+static void *datum_dump_submitblock_thread(void *arg) {
+	char *s = (char *)arg;
+	char path[512];
+	FILE *f;
+	if (!s) return NULL;
+	usleep(500000);
+	datum_dump_submitblock_build_path(path, sizeof(path), datum_config.mining_dump_submitblock_path, submitblock_hash, submitblock_height);
+	if (path[0]) {
+		f = fopen(path, "w");
+		if (f) {
+			fputs(s, f);
+			fputc('\n', f);
+			fclose(f);
+			DLOG_INFO("Full submitblock request written to %s", path);
+		} else {
+			DLOG_WARN("Could not write submitblock dump to %s: %s", path, strerror(errno));
+		}
+	}
+	free(s);
+	return NULL;
+}
+
+static void datum_dump_submitblock_async(const char *submitblock_req) {
+	char *req_copy;
+	pthread_t dump_thread;
+	pthread_attr_t attr;
+	if (!submitblock_req || !datum_config.mining_dump_submitblock_path[0]) return;
+	req_copy = strdup(submitblock_req);
+	if (!req_copy) return;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (pthread_create(&dump_thread, &attr, datum_dump_submitblock_thread, req_copy) != 0) {
+		free(req_copy);
+	}
+	pthread_attr_destroy(&attr);
+}
+
+datum_submitblock_status datum_submitblock_reply_status(const json_t *reply) {
+	if (!reply) return DATUM_SUBMITBLOCK_ACCEPTED;
+	const json_t * const result = json_object_get(reply, "result");
+	if (!result || json_is_null(result)) return DATUM_SUBMITBLOCK_ACCEPTED;
+	if (json_is_string(result) && !strcmp(json_string_value(result), "duplicate")) return DATUM_SUBMITBLOCK_DUPLICATE;
+	return DATUM_SUBMITBLOCK_REJECTED;
+}
+
+// Log what the node said about our block. Returns true when the block is in
+// the node's chain, which includes "duplicate": the block is handed in twice,
+// once inline from the share that found it and once from the submit thread,
+// and the second copy is not a rejection.
+bool datum_submitblock_log_reply(const json_t *reply, const char *block_hash_hex) {
+	switch (datum_submitblock_reply_status(reply)) {
+		case DATUM_SUBMITBLOCK_ACCEPTED:
+			DLOG_INFO("Block %s submitted to upstream node successfully!", block_hash_hex);
+			return true;
+		case DATUM_SUBMITBLOCK_DUPLICATE:
+			DLOG_INFO("Block %s was already accepted by the upstream node (duplicate submission)", block_hash_hex);
+			return true;
+		case DATUM_SUBMITBLOCK_REJECTED:
+		default: {
+			char * const s = json_dumps(reply, JSON_ENCODE_ANY);
+			DLOG_WARN("Upstream node rejected our block! (%s)", s ? s : "unknown");
+			free(s);
+			return false;
+		}
+	}
+}
+
 void datum_submitblock_doit(CURL *tcurl, char *url, const char *submitblock_req, const char *block_hash_hex) {
 	json_t *r;
 	char *s = NULL;
@@ -72,22 +181,13 @@ void datum_submitblock_doit(CURL *tcurl, char *url, const char *submitblock_req,
 	} else {
 		r = json_rpc_call(tcurl, url, NULL, submitblock_req);
 	}
-	if (!r) {
-		// oddly, this means success here.
-		DLOG_INFO("Block %s submitted to upstream node successfully!",block_hash_hex);
-	} else {
-		s = json_dumps(r, JSON_ENCODE_ANY);
-		if (!s) {
-			DLOG_WARN("Upstream node rejected our block! (unknown)");
-		} else {
-			DLOG_WARN("Upstream node rejected our block! (%s)",s);
-			free(s);
-		}
-		json_decref(r);
-	}
+	datum_submitblock_log_reply(r, block_hash_hex);
+	if (r) json_decref(r);
 	
 	// precious block!
 	preciousblock(tcurl, submitblock_hash);
+
+	datum_dump_submitblock_async(submitblock_req);
 }
 
 void *datum_submitblock_thread(void *ptr) {
@@ -222,6 +322,7 @@ void datum_submitblock_tests(void) {
 	datum_test(state.requests[1] == second_request);
 	datum_test(!strcmp(state.hashes[0], first_hash));
 	datum_test(!strcmp(state.hashes[1], second_hash));
+	datum_submitblock_reply_tests();
 }
 
 void datum_submitblock_init(void) {

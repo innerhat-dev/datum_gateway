@@ -33,11 +33,32 @@
  *
  */
 
+#include <stdio.h>
 #include <string.h>
 #include <sodium.h>
 
 #include "datum_pow.h"
 #include "datum_utils.h"
+#include "datum_conf.h"
+
+static uint32_t datum_blake2b_wire_version(uint32_t version) {
+	if (datum_config.mining_blake2b_force_version_high_bit) {
+		return version | UINT32_C(0x80000000);
+	}
+	return version;
+}
+
+static void datum_blake2b_debug_hex(const char *label, const unsigned char *p, size_t n) {
+	char hex[512];
+	size_t i;
+	if (!datum_config.logger_debug_blake2b_pow) return;
+	if (!label || !p || n == 0 || n > 160) return;
+	for (i = 0; i < n; i++) {
+		sprintf(hex + (i * 2), "%02x", p[i]);
+	}
+	hex[n * 2] = 0;
+	DLOG_INFO("BLAKE2B DEBUG %s (%zu bytes): %s", label, n, hex);
+}
 
 static int datum_hex_nibble(const char c) {
 	if (c >= '0' && c <= '9') return c - '0';
@@ -215,7 +236,7 @@ bool datum_blake2b_header_commitment(
 
 	datum_blake2b_xor_key_hash(xor_key_hash, xor_key);
 
-	pk_u32le(h1_payload, o, version | UINT32_C(0x80000000)); o += 4;
+	pk_u32le(h1_payload, o, datum_blake2b_wire_version(version)); o += 4;
 	datum_reverse32(h1_payload + o, prevhash); o += 32;
 	pk_u32le(h1_payload, o, height); o += 4;
 	memcpy(h1_payload + o, merkle, 32); o += 32;
@@ -227,6 +248,8 @@ bool datum_blake2b_header_commitment(
 	h1_payload[o++] = xor_key_mask_clear_bits;
 	memcpy(h1_payload + o, xor_key_hash, 32); o += 32;
 	if (o != (int)sizeof(h1_payload)) return false;
+
+	datum_blake2b_debug_hex("H1", h1_payload, sizeof(h1_payload));
 
 	datum_sha256_tagged(h1_hash, "Bitcoin block header 1", h1_payload, sizeof(h1_payload));
 
@@ -256,6 +279,7 @@ bool datum_blake2b_pow_hash_le(unsigned char *hash_le, const unsigned char *work
 	for(i=0;i<32;i++) {
 		hash_le[31 - i] = (unsigned char)(hash[i] ^ mask[i]);
 	}
+	datum_blake2b_debug_hex("final hash (LE)", hash_le, 32);
 	return true;
 }
 
@@ -276,7 +300,7 @@ void datum_blake2b_serialize_block_header(
 	uint32_t height,
 	const unsigned char *rhs
 ) {
-	pk_u32le(header, 0, version | UINT32_C(0x80000000));
+	pk_u32le(header, 0, datum_blake2b_wire_version(version));
 	memcpy(header + 4, prevhash, 32);
 	memcpy(header + 36, merkle, 32);
 	pk_u32le(header, 68, time_on_wire);

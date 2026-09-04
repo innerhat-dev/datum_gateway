@@ -404,6 +404,9 @@ static void datum_blake2b_share_ntime_tests(void) {
 }
 
 static void datum_pow_blake2b_vector_tests(void) {
+       /* --test runs before datum_read_config(), so apply the production default. */
+       const bool saved_force_high_bit = datum_config.mining_blake2b_force_version_high_bit;
+       datum_config.mining_blake2b_force_version_high_bit = true;
        /* H1+H2 match Knots CBlockHeader::GetHash with wire version bit 0x80000000 in H1. */
        static const char expected_commitment_hex[] =
                "be3009118e9fbe8be787c9fef5ee1a34c95b92efe7c6f1d430c488e094ce94a8";
@@ -541,6 +544,20 @@ static void datum_pow_blake2b_vector_tests(void) {
                datum_test(datum_pow_decode_hex_exact(knots_hash_le_hex, 32, expected));
                datum_test(!memcmp(hash_le, expected, 32));
        }
+
+       /* Flag off must leave the caller's version alone (no extra 0x80000000). */
+       datum_config.mining_blake2b_force_version_high_bit = false;
+       datum_blake2b_serialize_block_header(header, 0x20000000, prevhash, merkle,
+               0x6553412f, 0x207fffff, nonce, ntime, extranonce, 3,
+               DATUM_BLAKE2B_USE_TIME_OFFSET, 13, xor_key, 12345, rhs);
+       datum_test(upk_u32le(header, 0) == 0x20000000);
+       datum_config.mining_blake2b_force_version_high_bit = true;
+       datum_blake2b_serialize_block_header(header, 0x20000000, prevhash, merkle,
+               0x6553412f, 0x207fffff, nonce, ntime, extranonce, 3,
+               DATUM_BLAKE2B_USE_TIME_OFFSET, 13, xor_key, 12345, rhs);
+       datum_test(upk_u32le(header, 0) == UINT32_C(0xa0000000));
+
+       datum_config.mining_blake2b_force_version_high_bit = saved_force_high_bit;
 }
 
 static void datum_pow_response_large_difficulty_test(void) {

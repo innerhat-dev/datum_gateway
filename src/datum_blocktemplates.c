@@ -54,6 +54,8 @@
 #include "datum_conf.h"
 #include "datum_stratum.h"
 #include "datum_pow.h"
+#include "datum_coinbaser.h"
+#include "datum_protocol.h"
 
 volatile sig_atomic_t new_notify = 0;
 atomic_int new_notify_threadsafe = 0;
@@ -141,6 +143,52 @@ void datum_template_clear(T_DATUM_TEMPLATE_DATA* p) {
 	p->txn_total_sigops = 0;
 	p->txns = p->local_data;
 	datum_template_clear_header_fields(p);
+}
+
+// The template at the fork height carries the headline the node will search
+// the coinbase scriptSig for (reject reason bad-headline). The gateway does
+// not insert it; it has to be in the coinbase tags. Say so before a block is
+// found with the wrong ones. Logs once per height.
+static void datum_blocktemplates_check_headline(const json_t *gbt, const T_DATUM_TEMPLATE_DATA *t) {
+	static uint32_t checked_height = 0;
+	unsigned char headline[128];
+	char shown[129];
+	const json_t *aux, *jval;
+	const char *hex, *primary;
+	size_t hl, n, i;
+	
+	aux = json_object_get(gbt, "coinbaseaux");
+	if (!json_is_object(aux)) return;
+	jval = json_object_get(aux, "blake2b_headline");
+	if (!json_is_string(jval)) return;
+	if (t->height == checked_height) return;
+	checked_height = t->height;
+	
+	hex = json_string_value(jval);
+	hl = strlen(hex);
+	if (!hl || (hl & 1) || hl > sizeof(headline) * 2) {
+		DLOG_WARN("Template at height %u carries a blake2b_headline of %zu hex characters; not checking the coinbase tags against it", t->height, hl);
+		return;
+	}
+	n = hl / 2;
+	for (i = 0; i < n; i++) {
+		headline[i] = hex2bin_uchar(&hex[i << 1]);
+		shown[i] = (headline[i] >= 0x20 && headline[i] < 0x7F) ? (char)headline[i] : '?';
+	}
+	shown[n] = 0;
+	
+	primary = datum_protocol_is_active() ? datum_config.override_mining_coinbase_tag_primary : datum_config.mining_coinbase_tag_primary;
+	switch (datum_coinbaser_headline_status(primary, datum_config.mining_coinbase_tag_secondary, headline, n)) {
+		case DATUM_HEADLINE_PRESENT:
+			DLOG_INFO("Template at height %u requires the headline \"%s\" in the coinbase; the coinbase tags carry it", t->height, shown);
+			break;
+		case DATUM_HEADLINE_TRIMMED:
+			DLOG_ERROR("Template at height %u requires the headline \"%s\" in the coinbase. The tags contain it, but together they exceed the %d bytes the coinbaser can fit and the secondary tag is being cut, so any block found now is invalid (bad-headline). Shorten mining.coinbase_tag_primary and restart.", t->height, shown, MAX_COINBASE_TAG_SPACE);
+			break;
+		case DATUM_HEADLINE_MISSING:
+			DLOG_ERROR("Template at height %u requires the headline \"%s\" in the coinbase and neither coinbase tag contains it, so any block found now is invalid (bad-headline). Set mining.coinbase_tag_secondary to the exact headline and restart.", t->height, shown);
+			break;
+	}
 }
 
 bool datum_gbt_advertise_blake2b(void) {
@@ -355,7 +403,12 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 			tdata->version &= ~0x80000000;
 		}
 		if (!want_blake2b && !strcmp(datum_config.mining_pow_algorithm, "blake2b")) {
+			static bool warned_forced = false;
 			want_blake2b = true;
+			if (!warned_forced) {
+				warned_forced = true;
+				DLOG_WARN("mining.pow_algorithm is blake2b but the template at height %u does not carry the !blake2b rule. Unless this node is on the BLAKE2b chain with an older getblocktemplate, it will reject every block built here; auto follows the node.", tdata->height);
+			}
 		}
 		if (want_blake2b && strcmp(datum_config.mining_pow_algorithm, "sha256d")) {
 			tdata->header_version = 2;
@@ -364,6 +417,8 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 			}
 		}
 	}
+	
+	datum_blocktemplates_check_headline(gbt, tdata);
 	
 	jval = json_object_get(gbt, "bits");
 	if (json_string_length(jval) != 8) {
@@ -598,6 +653,8 @@ void *datum_gateway_template_thread(void *args) {
 	
 	char p1[72];
 	p1[0] = 0;
+	uint32_t last_header_version = 0;
+	bool have_last_header_version = false;
 	
 	while(1) {
 		i++;
@@ -626,9 +683,16 @@ void *datum_gateway_template_thread(void *args) {
 				
 				if (t) {
 					datum_blocktemplates_error = NULL;
+					datum_logger_note_height(t->height);
 					DLOG_DEBUG("height: %lu / value: %"PRIu64, (unsigned long)t->height, t->coinbasevalue);
 					DLOG_DEBUG("--- prevhash: %s", t->previousblockhash);
 					DLOG_DEBUG("--- txn_count: %u / sigops: %u / weight: %u / size: %u", t->txn_count, t->txn_total_sigops, t->txn_total_weight, t->txn_total_size);
+					
+					if (!have_last_header_version || t->header_version != last_header_version) {
+						DLOG_INFO("Template PoW is %s at height %lu", (t->header_version >= 2) ? "BLAKE2b (header v2)" : "SHA256d", (unsigned long)t->height);
+						last_header_version = t->header_version;
+						have_last_header_version = true;
+					}
 					
 					// If the previous block hash changed, or work is no longer valid, we should push clean work
 					const bool new_block = strcmp(t->previousblockhash, p1);

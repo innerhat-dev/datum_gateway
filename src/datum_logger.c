@@ -51,9 +51,13 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
 
+#include "datum_conf.h"
 #include "datum_logger.h"
 #include "datum_utils.h"
+#include "datum_gateway.h"
 
 const char *level_text[] = { "  ALL", "DEBUG", " INFO", " WARN", "ERROR", "FATAL" };
 
@@ -69,6 +73,254 @@ bool log_calling_function = true;
 bool log_to_stderr = false;
 bool log_rotate_daily = true;
 char log_file[1024] = { 0 };
+
+static char log_file_configured[1024] = { 0 };
+
+static int console_collapse_kind = 0;
+static int console_collapse_count = 0;
+static int console_collapse_open = 0;
+
+static int datum_console_job_kind(const char *msg)
+{
+	if (!msg) return 0;
+	if (!strncmp(msg, "Updating standard stratum job for block", 39)) return 1;
+	if (!strncmp(msg, "Updating priority stratum job for block", 39)) return 2;
+	if (!strcmp(msg, "NEW NETWORK BLOCK NOTIFICATION RECEIVED")) return 3;
+	if (!strncmp(msg, "NEW NETWORK BLOCK:", 18)) return 4;
+	return 0;
+}
+
+static int datum_console_is_tty(FILE *out)
+{
+	int fd;
+	if (!out) return 0;
+	fd = fileno(out);
+	if (fd < 0) return 0;
+	return isatty(fd);
+}
+
+static int datum_console_cols(FILE *out)
+{
+	struct winsize ws;
+	if (ioctl(fileno(out), TIOCGWINSZ, &ws) != 0) return 0;
+	return (int)ws.ws_col;
+}
+
+static void datum_console_write(FILE *out, const char *line_with_nl, const char *msg)
+{
+	int kind = datum_console_job_kind(msg);
+	int tty = datum_console_is_tty(out);
+	int cols = tty ? datum_console_cols(out) : 0;
+	size_t linelen = line_with_nl ? strlen(line_with_nl) : 0;
+	char rebuilt[1200];
+	int can_collapse = datum_config.clog_console_collapse_jobs && tty && kind && cols > 0 && (int)linelen + 16 < cols;
+
+	if (!can_collapse) {
+		if (console_collapse_open) {
+			fputc('\n', out);
+			console_collapse_open = 0;
+		}
+		console_collapse_kind = 0;
+		console_collapse_count = 0;
+		fputs(line_with_nl, out);
+		return;
+	}
+
+	/* Notification lines stack; the following NEW NETWORK BLOCK line eats them. */
+	if (kind == 4 && console_collapse_kind == 3 && console_collapse_count > 0) {
+		char base[1200];
+		size_t n;
+		snprintf(base, sizeof(base), "%s", line_with_nl);
+		n = strlen(base);
+		if (n && base[n-1] == '\n') base[--n] = 0;
+		{
+			const char *colon = strstr(base, ": ");
+			if (colon) {
+				size_t pre = (size_t)(colon + 2 - base);
+				snprintf(rebuilt, sizeof(rebuilt), "%.*sx%d NOTIFICATION + %s", (int)pre, base, console_collapse_count, colon + 2);
+			} else {
+				snprintf(rebuilt, sizeof(rebuilt), "x%d NOTIFICATION + %s", console_collapse_count, base);
+			}
+		}
+		if (!console_collapse_open) {
+			fputs("\033[1A\r", out);
+		} else {
+			fputc('\r', out);
+		}
+		fputs(rebuilt, out);
+		fputs("\033[K", out);
+		fflush(out);
+		console_collapse_kind = 4;
+		console_collapse_count = 1;
+		console_collapse_open = 1;
+		return;
+	}
+
+	if (console_collapse_kind == kind && console_collapse_count > 0 && kind != 4) {
+		const char *colon;
+		console_collapse_count++;
+		colon = strstr(line_with_nl, ": ");
+		if (colon) {
+			size_t pre = (size_t)(colon + 2 - line_with_nl);
+			snprintf(rebuilt, sizeof(rebuilt), "%.*sx%d %s", (int)pre, line_with_nl, console_collapse_count, colon + 2);
+		} else {
+			snprintf(rebuilt, sizeof(rebuilt), "%s", line_with_nl);
+		}
+		{
+			size_t n = strlen(rebuilt);
+			if (n && rebuilt[n-1] == '\n') rebuilt[n-1] = 0;
+		}
+		if (!console_collapse_open) {
+			fputs("\033[1A\r", out);
+		} else {
+			fputc('\r', out);
+		}
+		fputs(rebuilt, out);
+		fputs("\033[K", out);
+		fflush(out);
+		console_collapse_open = 1;
+		return;
+	}
+
+	if (console_collapse_open) {
+		fputc('\n', out);
+		console_collapse_open = 0;
+	}
+	console_collapse_kind = kind;
+	console_collapse_count = 1;
+	fputs(line_with_nl, out);
+}
+
+static const char *datum_logger_commit_last4(void)
+{
+	static char last4[5];
+	const char *h = GIT_COMMIT_HASH;
+	size_t n;
+	if (!h || !h[0]) return "unkn";
+	n = strlen(h);
+	if (n >= 4) h += n - 4;
+	snprintf(last4, sizeof(last4), "%s", h);
+	return last4;
+}
+
+static void datum_logger_dir_of(const char *path, char *dir, size_t dirsz)
+{
+	const char *slash;
+	if (!path || !dir || !dirsz) return;
+	dir[0] = 0;
+	slash = strrchr(path, '/');
+	if (!slash) { snprintf(dir, dirsz, "./"); return; }
+	{
+		size_t dlen = (size_t)(slash - path + 1);
+		if (dlen >= dirsz) dlen = dirsz - 1;
+		memcpy(dir, path, dlen);
+		dir[dlen] = 0;
+	}
+}
+
+static int datum_logger_copy_file(const char *src, const char *dst)
+{
+	FILE *in, *out;
+	char buf[8192];
+	size_t n;
+	if (!src || !dst || !src[0] || !dst[0]) return -1;
+	in = fopen(src, "rb");
+	if (!in) return -1;
+	out = fopen(dst, "wb");
+	if (!out) { fclose(in); return -1; }
+	while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+		if (fwrite(buf, 1, n, out) != n) { fclose(in); fclose(out); return -1; }
+	}
+	fclose(in);
+	fclose(out);
+	return 0;
+}
+
+void datum_logger_note_height(uint64_t height)
+{
+	(void)height;
+}
+
+#ifdef _WIN32
+#define DATUM_LOGUNROLL_BIN "logUnroll.exe"
+#define datum_popen(c,m) _popen(c,m)
+#define datum_pclose(f) _pclose(f)
+#else
+#define DATUM_LOGUNROLL_BIN "logUnroll"
+#define datum_popen(c,m) popen(c,m)
+#define datum_pclose(f) pclose(f)
+#endif
+
+static int datum_logger_exe_dir(const char *argv0, char *out, size_t outsz)
+{
+	char tmp[1024];
+	const char *slash;
+	tmp[0] = 0;
+#ifndef _WIN32
+	{
+		ssize_t n = readlink("/proc/self/exe", tmp, sizeof(tmp) - 1);
+		if (n > 0) tmp[n] = 0;
+	}
+#endif
+	if (!tmp[0] && argv0) snprintf(tmp, sizeof(tmp), "%s", argv0);
+	if (!tmp[0]) return -1;
+	slash = strrchr(tmp, '/');
+	if (!slash) { snprintf(out, outsz, "."); return 0; }
+	{
+		size_t n = (size_t)(slash - tmp);
+		if (n >= outsz) n = outsz - 1;
+		memcpy(out, tmp, n);
+		out[n] = 0;
+	}
+	return 0;
+}
+
+static int datum_logger_bin_commit(const char *path, char *out, size_t outsz)
+{
+	char cmd[1200];
+	FILE *f;
+	size_t n;
+	if (!path || !out || !outsz) return -1;
+	out[0] = 0;
+	snprintf(cmd, sizeof(cmd), "\"%s\" --commit", path);
+	f = datum_popen(cmd, "r");
+	if (!f) return -1;
+	if (!fgets(out, (int)outsz, f)) { datum_pclose(f); return -1; }
+	datum_pclose(f);
+	n = strlen(out);
+	while (n && (out[n-1] == '\n' || out[n-1] == '\r')) out[--n] = 0;
+	return out[0] ? 0 : -1;
+}
+
+void datum_logger_install_logunroll(const char *argv0)
+{
+	char logdir[1024], src[1200], dst[1200], have[160];
+	const char *cfg = log_file_configured[0] ? log_file_configured : log_file;
+	if (!cfg || !cfg[0]) return;
+	datum_logger_dir_of(cfg, logdir, sizeof(logdir));
+	if (!logdir[0]) return;
+	if (datum_logger_exe_dir(argv0, src, sizeof(src)) != 0) return;
+	{
+		size_t n = strlen(src);
+		snprintf(src + n, sizeof(src) - n, "/%s", DATUM_LOGUNROLL_BIN);
+	}
+	snprintf(dst, sizeof(dst), "%s%s", logdir, DATUM_LOGUNROLL_BIN);
+	{
+		FILE *probe = fopen(src, "rb");
+		if (!probe) return;
+		fclose(probe);
+	}
+	if (datum_logger_bin_commit(dst, have, sizeof(have)) == 0 && strcmp(have, GIT_COMMIT_HASH) == 0) return;
+	if (datum_logger_copy_file(src, dst) != 0) {
+		DLOG_WARN("Could not install %s -> %s: %s", src, dst, strerror(errno));
+		return;
+	}
+#ifndef _WIN32
+	chmod(dst, 0755);
+#endif
+	DLOG_INFO("Installed %s to log folder (git %s)", DATUM_LOGUNROLL_BIN, GIT_COMMIT_HASH);
+}
+
 
 int dlog_queue_max_entries = 0;
 int msg_buf_maxsz = DLOG_MSG_BUF_SIZE;
@@ -104,6 +356,8 @@ void datum_logger_config(
 	log_rotate_daily = clog_rotate_daily;
 	strncpy(log_file, clog_file, 1023);
 	log_file[1023] = 0;
+	strncpy(log_file_configured, clog_file ? clog_file : "", 1023);
+	log_file_configured[1023] = 0;
 	
 	if (log_level_console < 0) log_level_console = 0;
 	if (log_level_console > DLOG_LEVEL_FATAL) log_level_console = DLOG_LEVEL_FATAL;
@@ -362,7 +616,7 @@ void * datum_logger_thread(void *ptr) {
 				log_line[1199] = 0;
 				
 				if ((log_to_console) && (msg->level >= log_level_console)) {
-					fprintf(log_to_stderr?stderr:stdout, "%s", log_line);
+					datum_console_write(log_to_stderr?stderr:stdout, log_line, msg->msg);
 				}
 				
 				if ((log_to_file) && (msg->level >= log_level_file)) {

@@ -60,6 +60,7 @@
 #include "datum_api.h"
 #include "datum_coinbaser.h"
 #include "datum_protocol.h"
+#include "datum_submitblock.h"
 
 const char *datum_gateway_config_filename = NULL;
 
@@ -106,6 +107,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 		case 0x101:  // test
 			datum_utils_tests();
 			datum_conf_tests();
+			datum_coinbaser_tests();
 			datum_stratum_tests();
 			datum_submitblock_tests();
 			exit(datum_test_failed);
@@ -186,6 +188,7 @@ int main(const int argc, const char * const * const argv) {
 	
 	// Initialize logger thread
 	datum_logger_init();
+	datum_logger_install_logunroll(datum_argv[0]);
 	
 	if (datum_protocol_init()) {
 		DLOG_FATAL("Error initializing the DATUM protocol!");

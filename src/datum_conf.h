@@ -130,6 +130,12 @@ typedef struct {
 	char mining_save_submitblocks_dir[256];
 	bool mining_allow_hasher_time_rolling;
 	char mining_pow_algorithm[16];
+	bool mining_blake2b_force_version_high_bit;
+	char mining_dump_submitblock_path[256];
+	bool mining_validate_shares_on_node;
+	char mining_share_node_check[16];
+	int mining_share_node_check_every;
+	int mining_share_node_check_missingzeros;
 	int coinbase_unique_id;
 	
 	char api_admin_password[72];
@@ -151,7 +157,10 @@ typedef struct {
 	bool clog_calling_function;
 	bool clog_to_stderr;
 	bool clog_rotate_daily;
+	bool clog_console_collapse_jobs;
 	char clog_file[1024];
+	bool logger_log_shares;
+	bool logger_debug_blake2b_pow;
 	
 	char datum_pool_host[1024];
 	int datum_pool_port;

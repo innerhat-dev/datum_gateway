@@ -20,6 +20,7 @@ include(GNUInstallDirs)
 add_executable(datum_gateway
 	src/datum_blocktemplates.c
 	src/datum_coinbaser.c
+	src/datum_coinbaser_tests.c
 	src/datum_conf.c
 	src/datum_conf_tests.c
 	src/datum_gateway.c
@@ -33,6 +34,7 @@ add_executable(datum_gateway
 	src/datum_stratum_dupes.c
 	src/datum_stratum_tests.c
 	src/datum_submitblock.c
+	src/datum_submitblock_tests.c
 	src/datum_utils.c
 	src/datum_utils_tests.c
 	src/thirdparty_base58.c
@@ -137,6 +139,12 @@ add_custom_target(generate_git_version
 	VERBATIM
 )
 add_dependencies(datum_gateway generate_git_version)
+
+add_executable(logUnroll src/logunroll.c)
+set_target_properties(logUnroll PROPERTIES OUTPUT_NAME logUnroll)
+add_dependencies(logUnroll generate_git_version)
+target_include_directories(logUnroll PRIVATE $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>)
+install(TARGETS logUnroll DESTINATION bin)
 
 add_custom_command(
 	OUTPUT web_resources.h

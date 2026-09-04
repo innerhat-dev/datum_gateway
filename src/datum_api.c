@@ -229,6 +229,13 @@ void datum_api_var_STRATUM_JOB_DIFF(char *buffer, size_t buffer_size, const T_DA
 void datum_api_var_STRATUM_JOB_VERSION(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
 	snprintf(buffer, buffer_size, "%s (%u)", vardata->sjob->version, (unsigned)vardata->sjob->version_uint);
 }
+void datum_api_var_STRATUM_JOB_POW(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
+	if (vardata->sjob->block_template && vardata->sjob->block_template->header_version >= 2) {
+		snprintf(buffer, buffer_size, "BLAKE2b (header v%u)", (unsigned)vardata->sjob->block_template->header_version);
+	} else {
+		snprintf(buffer, buffer_size, "SHA256d");
+	}
+}
 void datum_api_var_STRATUM_JOB_BITS(char *buffer, size_t buffer_size, const T_DATUM_API_DASH_VARS *vardata) {
 	snprintf(buffer, buffer_size, "%s", vardata->sjob->nbits);
 }
@@ -278,6 +285,7 @@ DATUM_API_VarEntry var_entries[] = {
 	{"STRATUM_JOB_WITNESS", datum_api_var_STRATUM_JOB_WITNESS},
 	{"STRATUM_JOB_DIFF", datum_api_var_STRATUM_JOB_DIFF},
 	{"STRATUM_JOB_VERSION", datum_api_var_STRATUM_JOB_VERSION},
+	{"STRATUM_JOB_POW", datum_api_var_STRATUM_JOB_POW},
 	{"STRATUM_JOB_BITS", datum_api_var_STRATUM_JOB_BITS},
 	{"STRATUM_JOB_TIMEINFO", datum_api_var_STRATUM_JOB_TIMEINFO},
 	{"STRATUM_JOB_LIMITINFO", datum_api_var_STRATUM_JOB_LIMITINFO},

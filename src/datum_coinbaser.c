@@ -58,7 +58,60 @@ CURL *coinbaser_curl = NULL;
 
 const char *cbstart_hex = "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff"; // 82 len hex, 41 bytes
 
-#define MAX_COINBASE_TAG_SPACE 86 // leaves space for BIP34 height, extranonces, datum prime tag, etc.
+// MAX_COINBASE_TAG_SPACE (datum_coinbaser.h) leaves space for BIP34 height, extranonces, datum prime tag, etc.
+
+// The tag bytes generate_coinbase_input() puts in the scriptSig: primary, 0x0F,
+// secondary. With apply_trim the secondary is cut the way that function cuts
+// it when the two do not fit MAX_COINBASE_TAG_SPACE. Keep the two in step.
+size_t datum_coinbaser_tag_bytes(const char *primary, const char *secondary, bool apply_trim, unsigned char *out, size_t out_sz) {
+	int len0 = primary ? (int)strlen(primary) : 0;
+	int len1 = secondary ? (int)strlen(secondary) : 0;
+	int k = len0 + len1 + 2;
+	size_t n = 0;
+	
+	if (!len1) {
+		k--;
+		if (!len0) k--;
+	}
+	if (apply_trim && k > MAX_COINBASE_TAG_SPACE) {
+		const int excess = k - MAX_COINBASE_TAG_SPACE;
+		if (len1 > excess) {
+			len1 -= excess;
+		} else {
+			len1 = 0;
+		}
+	}
+	if ((size_t)(len0 + 1 + len1) > out_sz) return 0;
+	
+	memcpy(&out[n], primary, len0); n += len0;
+	if (len1) {
+		out[n++] = 0x0F;
+		memcpy(&out[n], secondary, len1); n += len1;
+	}
+	return n;
+}
+
+static bool datum_coinbaser_bytes_contain(const unsigned char *hay, size_t hay_len, const unsigned char *needle, size_t needle_len) {
+	if (!needle_len) return true;
+	if (needle_len > hay_len) return false;
+	for (size_t i = 0; i + needle_len <= hay_len; i++) {
+		if (!memcmp(&hay[i], needle, needle_len)) return true;
+	}
+	return false;
+}
+
+// Whether the node's std::search of the coinbase scriptSig for the headline
+// will succeed, given these tags. Tags are capped at 60 bytes each at load.
+datum_headline_status datum_coinbaser_headline_status(const char *primary, const char *secondary, const unsigned char *headline, size_t headline_len) {
+	unsigned char buf[256];
+	size_t n;
+	
+	n = datum_coinbaser_tag_bytes(primary, secondary, true, buf, sizeof(buf));
+	if (datum_coinbaser_bytes_contain(buf, n, headline, headline_len)) return DATUM_HEADLINE_PRESENT;
+	n = datum_coinbaser_tag_bytes(primary, secondary, false, buf, sizeof(buf));
+	if (datum_coinbaser_bytes_contain(buf, n, headline, headline_len)) return DATUM_HEADLINE_TRIMMED;
+	return DATUM_HEADLINE_MISSING;
+}
 
 int generate_coinbase_input(int height, char *cb, int *target_pot_index) {
 	int cb_input_sz = 0;
