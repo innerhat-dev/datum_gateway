@@ -375,25 +375,36 @@ int datum_protocol_coinbaser_fetch(void *sptr) {
 		return 0;
 	}
 	
-	datum_protocol_mining_cmd(msg, i);
-	
-	// spin here for up to 5 seconds while awaiting a coinbaser response from DATUM Prime
-	clock_gettime(CLOCK_REALTIME, &ts);
-	ts.tv_sec += 5; // Set timeout to 5 seconds
-	
+	// Hold the mutex from before the request goes out until the reply is consumed, so the
+	// receive thread cannot store and signal a reply before this thread is waiting for it.
+	// The send only appends to the outgoing buffer; it never blocks on the socket.
 	pthread_mutex_lock(&datum_protocol_coinbaser_fetch_mutex);
-	
-	rc = pthread_cond_timedwait(&datum_protocol_coinbaser_fetch_cond, &datum_protocol_coinbaser_fetch_mutex, &ts);
-	if (rc == ETIMEDOUT) {
+	datum_coinbaser_v2_response = NULL;
+
+	if (datum_protocol_mining_cmd(msg, i) != 0) {
 		pthread_mutex_unlock(&datum_protocol_coinbaser_fetch_mutex);
-		DLOG_DEBUG("Timeout waiting for coinbaser response from DATUM Prime");
 		return 0;
 	}
-	
-	if (rc != 0) {
-		DLOG_DEBUG("Error waiting for coinbaser response from DATUM Prime");
-		pthread_mutex_unlock(&datum_protocol_coinbaser_fetch_mutex);
-		return 0;
+
+	// wait here for up to 5 seconds for a coinbaser response from DATUM Prime
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 5; // Set timeout to 5 seconds
+
+	// Loop on the reply for this job's value: a stale reply or a spurious wakeup is not the answer.
+	while ((!datum_coinbaser_v2_response) ||
+	       (datum_coinbaser_v2_response_value[datum_coinbaser_v2_response_buf_idx] != value)) {
+		rc = pthread_cond_timedwait(&datum_protocol_coinbaser_fetch_cond, &datum_protocol_coinbaser_fetch_mutex, &ts);
+		if (rc == ETIMEDOUT) {
+			pthread_mutex_unlock(&datum_protocol_coinbaser_fetch_mutex);
+			DLOG_DEBUG("Timeout waiting for coinbaser response from DATUM Prime");
+			return 0;
+		}
+
+		if (rc != 0) {
+			DLOG_DEBUG("Error waiting for coinbaser response from DATUM Prime");
+			pthread_mutex_unlock(&datum_protocol_coinbaser_fetch_mutex);
+			return 0;
+		}
 	}
 	i = 0;
 	
