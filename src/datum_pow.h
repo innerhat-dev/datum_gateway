@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2026 Justin Filip and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -42,12 +42,13 @@
 
 #define DATUM_BLAKE2B_BLOCK_HEADER_SIZE 164
 #define DATUM_BLAKE2B_USE_TIME_OFFSET 4
+#define DATUM_BLAKE2B_ABW_SHARE_TARGET_BASE_BITS 32
+#define DATUM_BLAKE2B_HEADER_XOR_CLEAR_BITS_OFFSET 111
+#define DATUM_BLAKE2B_HEADER_XOR_KEY_OFFSET 112
 
 #define DATUM_POW_BLAKE2B 1
 #define DATUM_POW_RESERVED_BLAKE2B_USE_TIME_OFFSET 0x01
 #define DATUM_POW_FLAG_BLAKE2B 0x08
-
-bool datum_pow_decode_hex_exact(const char *hex, size_t out_len, unsigned char *out);
 
 bool datum_blake2b_time_on_wire(uint32_t *out, uint64_t ntime, uint64_t offset, uint8_t flags);
 /* The nTime a node reads from a header-v2 block built from this share: the
@@ -56,12 +57,18 @@ bool datum_blake2b_time_on_wire(uint32_t *out, uint64_t ntime, uint64_t offset, 
  * when it is not. ntime8 is the 8-byte time field as the hasher returned it. */
 uint32_t datum_blake2b_share_ntime(uint32_t time_on_wire, const unsigned char *ntime8, uint8_t flags);
 bool datum_blake2b_share_target(unsigned char *target, unsigned int bits);
-long double datum_blake2b_sia_difficulty(uint64_t n);
+uint32_t datum_blake2b_share_nbits(unsigned int bits);
+int datum_blake2b_format_stratum_difficulty(char *out, size_t out_size, uint64_t n);
 long double datum_blake2b_accounting_difficulty(long double x);
 
 bool datum_blake2b_256(unsigned char *out, const unsigned char *in, size_t len);
-void datum_blake2b_sia_coinb1(unsigned char *out, const unsigned char *commitment);
-void datum_blake2b_sia_prevhash(unsigned char *out, const unsigned char *prevhash);
+void datum_blake2b_coinb1(unsigned char *out, const unsigned char *commitment);
+void datum_blake2b_prevblock_hidden(unsigned char *out, const unsigned char *prevhash);
+void datum_blake2b_build_work_header_from_hidden(
+	unsigned char *work, const unsigned char *prevhash_hidden,
+	const unsigned char *nonce, const unsigned char *ntime,
+	const unsigned char *root
+);
 void datum_blake2b_build_work_header(unsigned char *work, const unsigned char *prevhash, const unsigned char *nonce, const unsigned char *ntime, const unsigned char *root);
 
 /* version may be with or without 0x80000000; H1 always includes the v2 bit. */
@@ -79,8 +86,21 @@ bool datum_blake2b_header_commitment(
 	const unsigned char *xor_key,
 	const unsigned char *rhs
 );
+bool datum_blake2b_header_commitment_from_key_hash(
+	unsigned char *commitment, uint32_t version, const unsigned char *prevhash,
+	uint32_t height, const unsigned char *merkle, uint32_t time_on_wire,
+	uint32_t nbits, uint32_t txcount, uint8_t flags,
+	uint8_t xor_key_mask_clear_bits, const unsigned char *xor_key_hash,
+	const unsigned char *rhs);
+bool datum_blake2b_xor_key_hash(unsigned char *out, const unsigned char *xor_key);
+bool datum_blake2b_xor_key_matches_hash(
+	const unsigned char *expected, const unsigned char *xor_key);
+uint8_t datum_blake2b_abw_clear_bits(uint8_t target_pot);
 bool datum_blake2b_work_root(unsigned char *root, const unsigned char *commitment, const unsigned char *extranonce);
 bool datum_blake2b_pow_hash_le(unsigned char *hash_le, const unsigned char *work, const unsigned char *xor_key, uint8_t xor_key_mask_clear_bits);
+bool datum_blake2b_apply_xor_mask_le(unsigned char *out,
+	const unsigned char *raw_hash, const unsigned char *xor_key,
+	uint8_t xor_key_mask_clear_bits);
 void datum_blake2b_serialize_block_header(
 	unsigned char *header,
 	uint32_t version,

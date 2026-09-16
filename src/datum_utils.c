@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -71,26 +71,6 @@ bool datum_test_fail_(const char *expr, const char *file, unsigned int line, con
 	return false;
 }
 
-void get_target_from_diff(unsigned char *result, uint64_t diff) {
-	uint64_t dividend_parts[4] = {0, 0, 0, 0x00000000FFFF0000};
-	uint64_t remainder = 0;
-	uint64_t quotient;
-	
-	memset(result, 0, 32);
-	
-	for (int i = 3; i >= 0; i--) {
-		__uint128_t temp = remainder;
-		temp = (temp << 64) | dividend_parts[i];
-		
-		quotient = temp / diff;
-		remainder = temp % diff;
-		
-		for (int j = 0; j < 8; j++) {
-			result[(i<<3) + j] = (quotient >> (j<<3)) & 0xFF;
-		}
-	}
-}
-
 uint64_t get_process_uptime_seconds() {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -105,6 +85,7 @@ void datum_utils_init(void) {
 #ifdef __GNUC__
 // faster, less portable
 uint64_t roundDownToPowerOfTwo_64(uint64_t x) {
+	if (x == 0) return 0; // __builtin_clzll(0) is undefined (CONVOY #12)
 	return 1ULL << (63 - __builtin_clzll(x));
 }
 
@@ -376,6 +357,34 @@ void hex_to_bin(const char *hex, unsigned char *bin) {
 	}
 }
 
+static int hex_value(const char c) {
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+bool hex_to_bin_exact(const char *hex, unsigned char *bin, const size_t bin_len) {
+	int high, low;
+	if (!hex || !bin) return false;
+	for (size_t i = 0; i < bin_len; i++) {
+		high = hex_value(hex[i<<1]);
+		if (high < 0) return false;
+		low = hex_value(hex[(i<<1)+1]);
+		if (low < 0) return false;
+		bin[i] = (unsigned char)((high << 4) | low);
+	}
+	return hex[bin_len<<1] == 0;
+}
+
+bool hex_to_u32(const char *hex, uint32_t *out) {
+	unsigned char bin[4];
+	if (!out || !hex_to_bin_exact(hex, bin, sizeof(bin))) return false;
+	*out = ((uint32_t)bin[0] << 24) | ((uint32_t)bin[1] << 16) |
+		((uint32_t)bin[2] << 8) | bin[3];
+	return true;
+}
+
 void panic_from_thread(int a) {
 	// set panic flag
 	panic_mode = 1;
@@ -600,6 +609,25 @@ bool strncpy_workerchars(char *out, const char *in, size_t maxlen) {
 	return true;
 }
 
+bool strncpy_printable(char *out, const char *in, size_t maxlen) {
+	// copy a string from in to out for the log, replacing anything outside
+	// printable ASCII with '?' so a client cannot put line breaks or terminal
+	// escapes into the log
+	// copy a max of maxlen-1 chars from in to out
+	size_t i = 0;
+
+	if (in == NULL || out == NULL || maxlen == 0) {
+		return false;
+	}
+
+	for (; in[i] != 0 && i + 1 < maxlen; i++) {
+		const unsigned char c = (unsigned char)in[i];
+		out[i] = (c >= 0x20 && c <= 0x7e) ? (char)c : '?';
+	}
+	out[i] = 0;
+	return true;
+}
+
 bool strncpy_uachars(char *out, const char *in, size_t maxlen) {
 	// copy a string from in to out, stripping out unwanted characters
 	// copy a max of maxlen chars from in to out
@@ -818,7 +846,13 @@ char **datum_deepcopy_charpp(const char * const * const p) {
 void datum_reexec() {
 	// FIXME: kill other threads (except logging?) before closing fds
 	
-	DIR * const D = opendir("/proc/self/fd");
+	DIR * const D = opendir(
+#ifdef __APPLE__
+	                        "/dev/fd"
+#else
+	                        "/proc/self/fd"
+#endif
+	);
 	if (D) {
 		for (struct dirent *ent; (ent = readdir(D)) != NULL; ) {
 			const int fd = datum_atoi_strict(ent->d_name, strlen(ent->d_name));
@@ -827,7 +861,13 @@ void datum_reexec() {
 		}
 		closedir(D);
 	} else {
-		DLOG_ERROR("%s: Failed to close files, this could cause issues! (Is /proc mounted?)", __func__);
+		DLOG_ERROR("%s: Failed to close files, this could cause issues! (Is "
+#ifdef __APPLE__
+			"/dev"
+#else
+			"/proc"
+#endif
+			" mounted?)", __func__);
 	}
 	
 	execv((void*)datum_argv[0], (void*)datum_argv);

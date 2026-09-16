@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2025 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -51,13 +51,16 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdatomic.h>
 
 #include "datum_logger.h"
 #include "datum_utils.h"
 
 const char *level_text[] = { "  ALL", "DEBUG", " INFO", " WARN", "ERROR", "FATAL" };
 
-volatile bool datum_logger_initialized = false;
+static atomic_bool datum_logger_initialized = false;
+static FILE *log_handle = NULL;
 volatile bool log_reopen_signal = false;
 
 // configurable options
@@ -260,37 +263,8 @@ void * datum_logger_thread(void *ptr) {
 	DLOG_MSG *msg;
 	char time_buffer[20];
 	char log_line[1200];
-	FILE *log_handle = NULL;
 	time_t next_log_rotate = get_midnight_timestamp();
 	time_t log_file_opened = time(NULL);
-	
-	msg_buffer[0] = calloc((DLOG_MSG_BUF_SIZE * 2) + (1024*8),1);
-	if (!msg_buffer[0]) {
-		DLOG(DLOG_LEVEL_FATAL, "Could not allocate memory for logger queue!");
-		panic_from_thread(__LINE__);
-	}
-	// split the allocation in half for the double buffering
-	msg_buffer[1] = &msg_buffer[0][DLOG_MSG_BUF_SIZE + (1024*4)];
-	
-	dlog_queue_max_entries = (DLOG_MSG_BUF_SIZE / sizeof(DLOG_MSG)) - 1;
-	if (dlog_queue_max_entries < 1024) dlog_queue_max_entries = 1024;
-	dlog_queue[0] = calloc(dlog_queue_max_entries * 2 * sizeof(DLOG_MSG),1);
-	if (!dlog_queue[0]) {
-		DLOG(DLOG_LEVEL_FATAL, "Could not allocate memory for logger queue list!");
-		panic_from_thread(__LINE__);
-	}
-	dlog_queue[1] = &dlog_queue[0][dlog_queue_max_entries];
-	
-	if ((log_to_file) && (log_file[0] != 0)) {
-		log_handle = fopen(log_file,"a");
-		if (!log_handle) {
-			DLOG(DLOG_LEVEL_FATAL, "Could not open log file (%s): %s!", log_file, strerror(errno));
-			panic_from_thread(__LINE__);
-		}
-	}
-	
-	// alert the masses.
-	datum_logger_initialized = true;
 	
 	DLOG(DLOG_LEVEL_DEBUG, "Logging thread started! (Approximately %d MB of RAM allocated for up to %d entries per cycle)", (DLOG_MSG_BUF_SIZE * 4)/1024/1024, dlog_queue_max_entries);
 	lflush = 0;
@@ -455,15 +429,143 @@ void datum_logger_hup_signal(int signum) {
 	log_reopen_signal = true;
 }
 
+static void datum_logger_init_cleanup(void) {
+	if (log_handle) fclose(log_handle);
+	log_handle = NULL;
+	free(dlog_queue[0]);
+	dlog_queue[0] = dlog_queue[1] = NULL;
+	free(msg_buffer[0]);
+	msg_buffer[0] = msg_buffer[1] = NULL;
+	dlog_queue_max_entries = 0;
+}
+
+static int datum_logger_init_with_thread_create(
+	int (*thread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *)) {
+	pthread_t pthread_datum_logger_thread;
+
+	// Set the queue and the log file up here, before the writer thread
+	// exists, so a message logged right after init has somewhere to go. (CONVOY #6)
+	msg_buffer[0] = calloc((DLOG_MSG_BUF_SIZE * 2) + (1024*8),1);
+	if (!msg_buffer[0]) {
+		DLOG(DLOG_LEVEL_FATAL, "Could not allocate memory for logger queue!");
+		return -1;
+	}
+	msg_buffer[1] = &msg_buffer[0][DLOG_MSG_BUF_SIZE + (1024*4)];
+	
+	dlog_queue_max_entries = (DLOG_MSG_BUF_SIZE / sizeof(DLOG_MSG)) - 1;
+	if (dlog_queue_max_entries < 1024) dlog_queue_max_entries = 1024;
+	dlog_queue[0] = calloc(dlog_queue_max_entries * 2 * sizeof(DLOG_MSG),1);
+	if (!dlog_queue[0]) {
+		DLOG(DLOG_LEVEL_FATAL, "Could not allocate memory for logger queue list!");
+		goto fail;
+	}
+	dlog_queue[1] = &dlog_queue[0][dlog_queue_max_entries];
+	
+	if ((log_to_file) && (log_file[0] != 0)) {
+		log_handle = fopen(log_file,"a");
+		if (!log_handle) {
+			DLOG(DLOG_LEVEL_FATAL, "Could not open log file (%s): %s!", log_file, strerror(errno));
+			goto fail;
+		}
+	}
+	
+	const int err = thread_create(&pthread_datum_logger_thread, NULL, datum_logger_thread, NULL);
+	if (err) {
+		DLOG_FATAL("Could not start logging thread: %s!", strerror(err));
+		goto fail;
+	}
+	// Publish only once a writer exists. Until then, callers log synchronously
+	// and cannot access queues that a failed startup needs to free.
+	datum_logger_initialized = true;
+	return 0;
+
+fail:
+	datum_logger_init_cleanup();
+	return -1;
+}
+
 int datum_logger_init(void) {
 	const struct sigaction hup_sigaction = { .sa_handler = datum_logger_hup_signal, };
 	if (0 != sigaction(SIGHUP, &hup_sigaction, NULL)) {
 		DLOG_ERROR("Failed to setup SIGHUP handler: %s", strerror(errno));
 	}
-	
-	pthread_t pthread_datum_logger_thread;
-	
-	pthread_create(&pthread_datum_logger_thread, NULL, datum_logger_thread, NULL);
-	
-	return 0;
+	return datum_logger_init_with_thread_create(pthread_create);
+}
+
+static int logger_test_create_result;
+static int logger_test_file_fd;
+
+static int logger_test_thread_create(pthread_t *thread, const pthread_attr_t *attr,
+	void *(*start)(void *), void *arg) {
+	(void)thread;
+	(void)attr;
+	(void)arg;
+	datum_test(start == datum_logger_thread);
+	datum_test(!datum_logger_initialized);
+	datum_test(msg_buffer[0] && msg_buffer[1] && dlog_queue[0] && dlog_queue[1]);
+	datum_test(log_handle != NULL);
+	logger_test_file_fd = log_handle ? fileno(log_handle) : -1;
+	return logger_test_create_result;
+}
+
+void datum_logger_tests(void) {
+	// Run before the production logger starts; injection never launches a writer.
+	datum_test(!datum_logger_initialized);
+	if (datum_logger_initialized) return;
+	char test_path[] = "/tmp/datum-logger-test-XXXXXX";
+	const int test_fd = mkstemp(test_path);
+	FILE *capture = tmpfile();
+	const int saved_stdout = dup(STDOUT_FILENO);
+	datum_test(test_fd >= 0 && capture && saved_stdout >= 0);
+	if (test_fd < 0 || !capture || saved_stdout < 0) {
+		if (test_fd >= 0) { close(test_fd); unlink(test_path); }
+		if (capture) fclose(capture);
+		if (saved_stdout >= 0) close(saved_stdout);
+		return;
+	}
+	close(test_fd);
+	const bool saved_file = log_to_file, saved_console = log_to_console, saved_stderr = log_to_stderr;
+	const int saved_level = log_level_console;
+	char saved_path[sizeof(log_file)];
+	memcpy(saved_path, log_file, sizeof(saved_path));
+	log_to_file = log_to_console = true;
+	log_to_stderr = false;
+	log_level_console = DLOG_LEVEL_ALL;
+	strcpy(log_file, test_path);
+	fflush(stdout);
+	datum_test(dup2(fileno(capture), STDOUT_FILENO) >= 0);
+	logger_test_create_result = EAGAIN;
+	datum_test(datum_logger_init_with_thread_create(logger_test_thread_create) == -1);
+	datum_test(!datum_logger_initialized && !log_handle);
+	datum_test(!msg_buffer[0] && !msg_buffer[1] && !dlog_queue[0] && !dlog_queue[1]);
+	datum_test(dlog_queue_max_entries == 0);
+	datum_test(fcntl(logger_test_file_fd, F_GETFD) == -1 && errno == EBADF);
+	DLOG_INFO("logger failure fallback test");
+	datum_test(dlog_queue_next[0] == 0 && dlog_queue_next[1] == 0);
+	fflush(stdout);
+	rewind(capture);
+	char output[1024] = {0};
+	fread(output, 1, sizeof(output) - 1, capture);
+	datum_test(strstr(output, "Could not start logging thread:") != NULL);
+	datum_test(strstr(output, "logger failure fallback test") != NULL);
+	datum_test(dup2(saved_stdout, STDOUT_FILENO) >= 0);
+	close(saved_stdout);
+	fclose(capture);
+
+	// Successful init has usable queues immediately, before the writer runs.
+	logger_test_create_result = 0;
+	datum_test(datum_logger_init_with_thread_create(logger_test_thread_create) == 0);
+	datum_test(datum_logger_initialized);
+	DLOG_INFO("logger immediate queue test");
+	datum_test(dlog_queue_next[0] == 1);
+	datum_test(!strcmp(dlog_queue[0][0].msg, "logger immediate queue test"));
+	datum_logger_initialized = false;
+	dlog_queue_next[0] = msg_buf_idx[0] = 0;
+	datum_logger_init_cleanup();
+	log_to_file = saved_file;
+	log_to_console = saved_console;
+	log_to_stderr = saved_stderr;
+	log_level_console = saved_level;
+	memcpy(log_file, saved_path, sizeof(log_file));
+	unlink(test_path);
 }

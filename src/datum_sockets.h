@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2025 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -166,7 +166,8 @@ typedef struct T_DATUM_THREAD_DATA {
 
 bool datum_sockets_setup_listening_sockets(const char *purpose, const char *addr, uint16_t port, int *out_socks, size_t *inout_socks_n);
 void *datum_gateway_listener_thread(void *arg);
-void datum_socket_setoptions(int sock);
+[[nodiscard]] bool datum_socket_set_nonblock(int sock);
+[[nodiscard]] bool datum_socket_setoptions(int sock);
 
 int datum_socket_send_string_to_client(T_DATUM_CLIENT_DATA *c, char *s);
 int datum_socket_send_chars_to_client(T_DATUM_CLIENT_DATA *c, char *s, int len);

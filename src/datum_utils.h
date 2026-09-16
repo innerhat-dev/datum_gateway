@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2014-2026 Luke Dashjr and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -59,6 +59,11 @@ void build_hex_lookup(void);
 bool my_sha256(void *digest, const void *buffer, size_t length);
 void nbits_to_target(uint32_t nbits, uint8_t *target);
 int compare_hashes(const uint8_t *hash1, const uint8_t *hash2);
+
+static inline long double datum_pdiff_to_bdiff(uint64_t n) {
+	return ((long double)n) * 65535.0L / 65536.0L;
+}
+
 unsigned long long block_reward(unsigned int block_height);
 int append_bitcoin_varint_hex(uint64_t n, char *s);
 int append_UNum_hex(uint64_t n, char *s);
@@ -66,8 +71,9 @@ void panic_from_thread(int a);
 bool double_sha256(void *out, const void *in, size_t length);
 void hex_to_bin_le(const char *hex, unsigned char *bin);
 void hex_to_bin(const char *hex, unsigned char *bin);
+bool hex_to_bin_exact(const char *hex, unsigned char *bin, size_t bin_len);
+bool hex_to_u32(const char *hex, uint32_t *out);
 void hash2hex(unsigned char *bytes, char *hexString);
-void get_target_from_diff(unsigned char *result, uint64_t diff);
 uint64_t roundDownToPowerOfTwo_64(uint64_t x);
 int addr_2_output_script(const char *addr, unsigned char *script, int max_len);
 int output_script_2_addr(const unsigned char *script, const int len, char *addr);
@@ -76,6 +82,7 @@ void uchar_to_hex(char *s, const unsigned char b);
 int get_bitcoin_varint_len_bytes(uint64_t n);
 bool strncpy_uachars(char *out, const char *in, size_t maxlen);
 bool strncpy_workerchars(char *out, const char *in, size_t maxlen);
+bool strncpy_printable(char *out, const char *in, size_t maxlen);
 long double calc_network_difficulty(const char *bits_hex);
 unsigned char floorPoT(uint64_t x);
 uint64_t datum_siphash(const void *src, uint64_t sz, const unsigned char key[16]);

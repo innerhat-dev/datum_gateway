@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -54,6 +54,7 @@
 #include "datum_conf.h"
 #include "datum_stratum.h"
 #include "datum_pow.h"
+#include "datum_protocol.h"
 
 volatile sig_atomic_t new_notify = 0;
 atomic_int new_notify_threadsafe = 0;
@@ -84,9 +85,17 @@ void datum_blocktemplates_notify_othercause() {
 	notify_othercause = 1;
 }
 
+bool datum_blocktemplates_abw_ready(T_DATUM_TEMPLATE_DATA *block_template,
+	bool datum_active, bool abw_required) {
+	if (!block_template) return false;
+	if (!datum_active || !abw_required) return true;
+	return datum_protocol_abw_apply_active(block_template);
+}
+
 T_DATUM_TEMPLATE_DATA *template_data = NULL;
 
 int next_template_index = 0;
+static uint64_t next_template_generation = 1;
 
 const char *datum_blocktemplates_error = NULL;
 
@@ -122,16 +131,6 @@ int datum_template_init(void) {
 	return 1;
 }
 
-static void datum_template_clear_header_fields(T_DATUM_TEMPLATE_DATA *p) {
-	p->header_version = 0;
-	p->header_transaction_count = 0;
-	p->header_flags = 0;
-	p->header_time_offset = 0;
-	p->xor_key_mask_clear_bits = 0;
-	memset(p->xor_key, 0, sizeof(p->xor_key));
-	memset(p->merge_mining_rhs, 0, sizeof(p->merge_mining_rhs));
-}
-
 void datum_template_clear(T_DATUM_TEMPLATE_DATA* p) {
 	p->coinbasevalue = 0;
 	p->txn_count = 0;
@@ -140,12 +139,6 @@ void datum_template_clear(T_DATUM_TEMPLATE_DATA* p) {
 	p->txn_total_weight = 0;
 	p->txn_total_sigops = 0;
 	p->txns = p->local_data;
-	datum_template_clear_header_fields(p);
-}
-
-bool datum_gbt_advertise_blake2b(void) {
-	// BIP22: if the node requires !blake2b, GBT fails unless we listed blake2b.
-	return strcmp(datum_config.mining_pow_algorithm, "sha256d") != 0;
 }
 
 bool datum_gbt_rules_want_blake2b(json_t *gbt) {
@@ -158,107 +151,10 @@ bool datum_gbt_rules_want_blake2b(json_t *gbt) {
 	if (!json_is_array(jval)) return false;
 	json_array_foreach(jval, ri, rule) {
 		s = json_string_value(rule);
-		if (s && (!strcmp(s, "blake2b") || !strcmp(s, "!blake2b"))) return true;
+		if (s && s[0] == '!') s++;
+		if (s && !strcmp(s, "blake2b")) return true;
 	}
 	return false;
-}
-
-static bool datum_gbt_try_hex_field(json_t *gbt, const char *key, unsigned char *out, size_t out_len) {
-	json_t *v = json_object_get(gbt, key);
-	if (!json_is_string(v)) return false;
-	const char *s = json_string_value(v);
-	if (!s || strlen(s) != out_len * 2) return false;
-	return datum_pow_decode_hex_exact(s, out_len, out);
-}
-
-bool datum_gbt_parse_header_fields(json_t *gbt, T_DATUM_TEMPLATE_DATA *tdata) {
-	json_t *jval;
-	const char *s;
-	bool have_blake2b = false;
-	bool have_sha256d = false;
-	json_int_t fv, xv;
-	
-	if (!gbt || !tdata || !json_is_object(gbt)) {
-		if (tdata) datum_template_clear_header_fields(tdata);
-		return false;
-	}
-	
-	datum_template_clear_header_fields(tdata);
-	
-	jval = json_object_get(gbt, "powalgorithm");
-	if (jval) {
-		if (!json_is_string(jval)) {
-			datum_template_clear_header_fields(tdata);
-			return false;
-		}
-		s = json_string_value(jval);
-		if (!s) {
-			datum_template_clear_header_fields(tdata);
-			return false;
-		}
-		if (!strcmp(s, "blake2b")) {
-			have_blake2b = true;
-			tdata->header_version = 2;
-		} else if (!strcmp(s, "sha256d")) {
-			have_sha256d = true;
-		} else {
-			datum_template_clear_header_fields(tdata);
-			return false;
-		}
-	}
-	
-	jval = json_object_get(gbt, "header_version");
-	if (jval) {
-		if (!json_is_integer(jval) || json_integer_value(jval) == 0) {
-			datum_template_clear_header_fields(tdata);
-			return false;
-		}
-		tdata->header_version = (uint32_t)json_integer_value(jval);
-	}
-	
-	if (have_sha256d && tdata->header_version >= 2) {
-		datum_template_clear_header_fields(tdata);
-		return false;
-	}
-	if (have_blake2b) {
-		tdata->header_version = 2;
-	}
-	if (!tdata->header_version) {
-		// BIP22 / SHA256d: success only when GBT named sha256d. Empty objects fail.
-		return have_sha256d;
-	}
-	
-	jval = json_object_get(gbt, "transaction_count");
-	if (json_is_integer(jval) && json_integer_value(jval) >= 0) {
-		tdata->header_transaction_count = (uint32_t)json_integer_value(jval);
-	}
-	
-	jval = json_object_get(gbt, "h1_flags");
-	if (!jval) jval = json_object_get(gbt, "header_flags");
-	if (json_is_integer(jval)) {
-		fv = json_integer_value(jval);
-		if (fv >= 0 && fv <= 255) tdata->header_flags = (uint8_t)fv;
-	}
-	
-	jval = json_object_get(gbt, "time_offset");
-	if (json_is_integer(jval) && json_integer_value(jval) >= 0 && json_integer_value(jval) <= UINT32_MAX) {
-		tdata->header_time_offset = (uint32_t)json_integer_value(jval);
-	}
-	
-	jval = json_object_get(gbt, "xor_key_mask_clear_bits");
-	if (json_is_integer(jval)) {
-		xv = json_integer_value(jval);
-		if (xv >= 0 && xv <= 255) tdata->xor_key_mask_clear_bits = (uint8_t)xv;
-	}
-	
-	datum_gbt_try_hex_field(gbt, "xor_key", tdata->xor_key, sizeof(tdata->xor_key));
-	datum_gbt_try_hex_field(gbt, "merge_mining_rhs", tdata->merge_mining_rhs, sizeof(tdata->merge_mining_rhs));
-	
-	if (datum_config.mining_allow_hasher_time_rolling) {
-		tdata->header_flags = DATUM_BLAKE2B_USE_TIME_OFFSET;
-	}
-	
-	return true;
 }
 
 T_DATUM_TEMPLATE_DATA *get_next_template_ptr(void) {
@@ -269,6 +165,8 @@ T_DATUM_TEMPLATE_DATA *get_next_template_ptr(void) {
 	p = &template_data[next_template_index];
 	
 	datum_template_clear(p);
+	p->generation = next_template_generation++;
+	if (!next_template_generation) next_template_generation = 1;
 	
 	next_template_index++;
 	if (next_template_index >= MAX_TEMPLATES_IN_MEMORY) {
@@ -339,30 +237,10 @@ T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt) {
 		return NULL;
 	}
 
-	if (json_object_get(gbt, "powalgorithm") || json_object_get(gbt, "header_version")) {
-		if (!datum_gbt_parse_header_fields(gbt, tdata)) {
-			DLOG_ERROR("Unsupported or invalid header/PoW fields from GBT JSON");
-			return NULL;
-		}
-	} else {
-		want_blake2b = datum_gbt_rules_want_blake2b(gbt);
-		jval = json_object_get(gbt, "coinbaseaux");
-		if (!want_blake2b && json_is_object(jval) && json_object_get(jval, "blake2b_headline")) {
-			want_blake2b = true;
-		}
-		if (tdata->version & 0x80000000) {
-			want_blake2b = true;
-			tdata->version &= ~0x80000000;
-		}
-		if (!want_blake2b && !strcmp(datum_config.mining_pow_algorithm, "blake2b")) {
-			want_blake2b = true;
-		}
-		if (want_blake2b && strcmp(datum_config.mining_pow_algorithm, "sha256d")) {
-			tdata->header_version = 2;
-			if (datum_config.mining_allow_hasher_time_rolling) {
-				tdata->header_flags = DATUM_BLAKE2B_USE_TIME_OFFSET;
-			}
-		}
+	want_blake2b = datum_gbt_rules_want_blake2b(gbt);
+	if (!want_blake2b) {
+		DLOG_ERROR("GBT does not support the blake2b rule");
+		return NULL;
 	}
 	
 	jval = json_object_get(gbt, "bits");
@@ -603,11 +481,7 @@ void *datum_gateway_template_thread(void *args) {
 		i++;
 		
 		// fetch latest template
-		if (datum_gbt_advertise_blake2b()) {
-			snprintf(gbt_req, sizeof(gbt_req), "{\"method\":\"getblocktemplate\",\"params\":[{\"rules\":[\"segwit\",\"blake2b\"]}],\"id\":%"PRIu64"}",(uint64_t)((uint64_t)time(NULL)<<(uint64_t)8)|(uint64_t)(i&255));
-		} else {
-			snprintf(gbt_req, sizeof(gbt_req), "{\"method\":\"getblocktemplate\",\"params\":[{\"rules\":[\"segwit\"]}],\"id\":%"PRIu64"}",(uint64_t)((uint64_t)time(NULL)<<(uint64_t)8)|(uint64_t)(i&255));
-		}
+		snprintf(gbt_req, sizeof(gbt_req), "{\"method\":\"getblocktemplate\",\"params\":[{\"rules\":[\"segwit\",\"blake2b\"]}],\"id\":%"PRIu64"}",(uint64_t)((uint64_t)time(NULL)<<(uint64_t)8)|(uint64_t)(i&255));
 		gbt = bitcoind_json_rpc_call(tcurl, &datum_config, gbt_req);
 		
 		if (!gbt) {
@@ -623,6 +497,12 @@ void *datum_gateway_template_thread(void *args) {
 			} else {
 				DLOG_DEBUG("DEBUG: calling datum_gbt_parser (new=%d)", was_notified?1:0);
 				t = datum_gbt_parser(res_val);
+				if (t && !datum_blocktemplates_abw_ready(t,
+					datum_protocol_is_active(),
+					datum_protocol_abw_required())) {
+					DLOG_DEBUG("Retaining current work until a BLAKE2b anti-withholding assignment is active");
+					t = NULL;
+				}
 				
 				if (t) {
 					datum_blocktemplates_error = NULL;

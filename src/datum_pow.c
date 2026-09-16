@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2026 Justin Filip and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -33,29 +33,12 @@
  *
  */
 
+#include <stdio.h>
 #include <string.h>
 #include <sodium.h>
 
 #include "datum_pow.h"
 #include "datum_utils.h"
-
-static int datum_hex_nibble(const char c) {
-	if (c >= '0' && c <= '9') return c - '0';
-	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-	return -1;
-}
-
-bool datum_pow_decode_hex_exact(const char *hex, size_t out_len, unsigned char *out) {
-	size_t i;
-	if (!hex || !out) return false;
-	for (i = 0; i < out_len; i++) {
-		if (datum_hex_nibble(hex[i<<1]) < 0) return false;
-		if (datum_hex_nibble(hex[(i<<1)+1]) < 0) return false;
-		out[i] = hex2bin_uchar(&hex[i<<1]);
-	}
-	return hex[out_len<<1] == 0;
-}
 
 bool datum_blake2b_time_on_wire(uint32_t *out, uint64_t ntime, uint64_t offset, uint8_t flags) {
 	if (!out) return false;
@@ -106,8 +89,40 @@ bool datum_blake2b_share_target(unsigned char *target, unsigned int bits) {
 	return true;
 }
 
-long double datum_blake2b_sia_difficulty(uint64_t n) {
-	return ((long double)n) * 65535.0L / 65536.0L;
+uint32_t datum_blake2b_share_nbits(unsigned int bits) {
+	unsigned char target[32];
+	unsigned int size = sizeof(target);
+	uint32_t mantissa = 0;
+	
+	if (!datum_blake2b_share_target(target, bits)) return 0;
+	while (size && !target[size - 1]) size--;
+	if (size <= 3) {
+		for (unsigned int i = 0; i < size; i++) {
+			mantissa |= (uint32_t)target[i] << (8 * i);
+		}
+		mantissa <<= 8 * (3 - size);
+	} else {
+		mantissa = (uint32_t)target[size - 3] |
+			((uint32_t)target[size - 2] << 8) |
+			((uint32_t)target[size - 1] << 16);
+	}
+	if (mantissa & UINT32_C(0x00800000)) {
+		mantissa >>= 8;
+		size++;
+	}
+	// Compact encoding truncates toward a harder target. This is the closest
+	// representable value that cannot classify work below Gateway's accepted
+	// share target as satisfying the synthetic network target.
+	return (size << 24) | (mantissa & UINT32_C(0x007fffff));
+}
+
+int datum_blake2b_format_stratum_difficulty(char *out, size_t out_size, uint64_t n) {
+	if (!out || !out_size) return -1;
+	int len = snprintf(out, out_size, "%.20Lf", datum_pdiff_to_bdiff(n));
+	if (len < 0 || (size_t)len >= out_size) return -1;
+	while (len > 0 && out[len - 1] == '0') out[--len] = '\0';
+	if (len > 0 && out[len - 1] == '.') out[--len] = '\0';
+	return len;
 }
 
 long double datum_blake2b_accounting_difficulty(long double x) {
@@ -149,8 +164,17 @@ static void datum_sha256_tagged(unsigned char *out, const char *tag, const unsig
 	crypto_hash_sha256_final(&st, out);
 }
 
-static void datum_blake2b_xor_key_hash(unsigned char *out, const unsigned char *xor_key) {
+bool datum_blake2b_xor_key_hash(unsigned char *out, const unsigned char *xor_key) {
+	if (!out || !xor_key) return false;
 	datum_sha256_tagged(out, "Bitcoin block hash PoW XOR key", xor_key, 16);
+	return true;
+}
+
+bool datum_blake2b_xor_key_matches_hash(
+	const unsigned char *expected, const unsigned char *xor_key) {
+	unsigned char actual[32];
+	return expected && datum_blake2b_xor_key_hash(actual, xor_key) &&
+		sodium_memcmp(actual, expected, sizeof(actual)) == 0;
 }
 
 static void datum_blake2b_xor_key_mask(unsigned char *mask, const unsigned char *xor_key, uint8_t clear_bits) {
@@ -169,27 +193,37 @@ static void datum_blake2b_xor_key_mask(unsigned char *mask, const unsigned char 
 	}
 }
 
-void datum_blake2b_sia_coinb1(unsigned char *out, const unsigned char *commitment) {
+void datum_blake2b_coinb1(unsigned char *out, const unsigned char *commitment) {
 	memset(out, 0, 3);
 	memcpy(out + 3, commitment, 32);
 	memset(out + 35, 0, 4);
 }
 
-void datum_blake2b_sia_prevhash(unsigned char *out, const unsigned char *prevhash) {
+void datum_blake2b_prevblock_hidden(unsigned char *out, const unsigned char *prevhash) {
 	unsigned char ordered[32];
 	datum_reverse32(ordered, prevhash);
 	datum_sha256_tagged(out, "Bitcoin prevblock header, hashed", ordered, 32);
 	memset(out, 0, 6);
 }
 
-void datum_blake2b_build_work_header(unsigned char *work, const unsigned char *prevhash, const unsigned char *nonce, const unsigned char *ntime, const unsigned char *root) {
-	datum_blake2b_sia_prevhash(work, prevhash);
+void datum_blake2b_build_work_header_from_hidden(
+	unsigned char *work, const unsigned char *prevhash_hidden,
+	const unsigned char *nonce, const unsigned char *ntime,
+	const unsigned char *root
+) {
+	memcpy(work, prevhash_hidden, 32);
 	memcpy(work + 32, nonce, 8);
 	memcpy(work + 40, ntime, 8);
 	memcpy(work + 48, root, 32);
 }
 
-bool datum_blake2b_header_commitment(
+void datum_blake2b_build_work_header(unsigned char *work, const unsigned char *prevhash, const unsigned char *nonce, const unsigned char *ntime, const unsigned char *root) {
+	unsigned char prevhash_hidden[32];
+	datum_blake2b_prevblock_hidden(prevhash_hidden, prevhash);
+	datum_blake2b_build_work_header_from_hidden(work, prevhash_hidden, nonce, ntime, root);
+}
+
+bool datum_blake2b_header_commitment_from_key_hash(
 	unsigned char *commitment,
 	uint32_t version,
 	const unsigned char *prevhash,
@@ -200,10 +234,9 @@ bool datum_blake2b_header_commitment(
 	uint32_t txcount,
 	uint8_t flags,
 	uint8_t xor_key_mask_clear_bits,
-	const unsigned char *xor_key,
+	const unsigned char *xor_key_hash,
 	const unsigned char *rhs
 ) {
-	unsigned char xor_key_hash[32];
 	unsigned char h1_payload[119];
 	unsigned char h1_hash[32];
 	unsigned char h2_payload[96];
@@ -211,9 +244,7 @@ bool datum_blake2b_header_commitment(
 
 	// Matches Knots CBlockHeader::GetHash H1 (119 bytes) + H2 merge-mining hook.
 	// H1 version is the wire version, including header-v2 bit 0x80000000 (RC1+).
-	if (!commitment || !prevhash || !merkle || !xor_key || !rhs) return false;
-
-	datum_blake2b_xor_key_hash(xor_key_hash, xor_key);
+	if (!commitment || !prevhash || !merkle || !xor_key_hash || !rhs) return false;
 
 	pk_u32le(h1_payload, o, version | UINT32_C(0x80000000)); o += 4;
 	datum_reverse32(h1_payload + o, prevhash); o += 32;
@@ -237,25 +268,50 @@ bool datum_blake2b_header_commitment(
 	return true;
 }
 
+bool datum_blake2b_header_commitment(
+	unsigned char *commitment, uint32_t version, const unsigned char *prevhash,
+	uint32_t height, const unsigned char *merkle, uint32_t time_on_wire,
+	uint32_t nbits, uint32_t txcount, uint8_t flags,
+	uint8_t xor_key_mask_clear_bits, const unsigned char *xor_key,
+	const unsigned char *rhs) {
+	unsigned char xor_key_hash[32];
+	return datum_blake2b_xor_key_hash(xor_key_hash, xor_key) &&
+		datum_blake2b_header_commitment_from_key_hash(commitment, version,
+			prevhash, height, merkle, time_on_wire, nbits, txcount, flags,
+			xor_key_mask_clear_bits, xor_key_hash, rhs);
+}
+
+uint8_t datum_blake2b_abw_clear_bits(uint8_t target_pot) {
+	const unsigned bits = DATUM_BLAKE2B_ABW_SHARE_TARGET_BASE_BITS + target_pot;
+	return (uint8_t)(bits > 255 ? 255 : bits);
+}
+
 bool datum_blake2b_work_root(unsigned char *root, const unsigned char *commitment, const unsigned char *extranonce) {
 	unsigned char leaf[52];
 	if (!root || !commitment || !extranonce) return false;
 	leaf[0] = 0;
-	datum_blake2b_sia_coinb1(leaf + 1, commitment);
+	datum_blake2b_coinb1(leaf + 1, commitment);
 	memcpy(leaf + 40, extranonce, 12);
 	return datum_blake2b_256(root, leaf, sizeof(leaf));
 }
 
 bool datum_blake2b_pow_hash_le(unsigned char *hash_le, const unsigned char *work, const unsigned char *xor_key, uint8_t xor_key_mask_clear_bits) {
 	unsigned char hash[32];
-	unsigned char mask[32];
 	int i;
 	if (!hash_le || !work || !xor_key) return false;
 	if (!datum_blake2b_256(hash, work, 80)) return false;
+	for(i=0;i<32;i++) hash_le[31 - i] = hash[i];
+	return datum_blake2b_apply_xor_mask_le(
+		hash_le, hash_le, xor_key, xor_key_mask_clear_bits);
+}
+
+bool datum_blake2b_apply_xor_mask_le(unsigned char *out,
+	const unsigned char *raw_hash, const unsigned char *xor_key,
+	uint8_t xor_key_mask_clear_bits) {
+	unsigned char mask[32];
+	if (!out || !raw_hash || !xor_key) return false;
 	datum_blake2b_xor_key_mask(mask, xor_key, xor_key_mask_clear_bits);
-	for(i=0;i<32;i++) {
-		hash_le[31 - i] = (unsigned char)(hash[i] ^ mask[i]);
-	}
+	for(int i=0;i<32;i++) out[i] = raw_hash[i] ^ mask[31 - i];
 	return true;
 }
 
@@ -288,8 +344,8 @@ void datum_blake2b_serialize_block_header(
 	memcpy(header + 104, ntime, 4);
 	pk_u16le(header, 108, txcount);
 	header[110] = flags;
-	header[111] = xor_key_mask_clear_bits;
-	memcpy(header + 112, xor_key, 16);
+	header[DATUM_BLAKE2B_HEADER_XOR_CLEAR_BITS_OFFSET] = xor_key_mask_clear_bits;
+	memcpy(header + DATUM_BLAKE2B_HEADER_XOR_KEY_OFFSET, xor_key, 16);
 	pk_u32le(header, 128, height);
 	memcpy(header + 132, rhs, 32);
 }

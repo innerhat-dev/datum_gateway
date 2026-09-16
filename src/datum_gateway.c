@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -65,7 +65,7 @@ const char *datum_gateway_config_filename = NULL;
 
 // ARGP stuff
 const char *argp_program_version = "datum_gateway " DATUM_PROTOCOL_VERSION;
-const char *argp_program_bug_address = "<jason@ocean.xyz>";
+const char *argp_program_bug_address = "<luke+datum@convoy.xyz>";
 static char doc[] = "Decentralized Alternative Templates for Universal Mining - Pool Gateway";
 static char args_doc[] = "";
 static struct argp_option options[] = {
@@ -81,9 +81,16 @@ struct arguments {
 	char *config_file;
 };
 
+void datum_blocktemplates_tests(void);
+void datum_coinbaser_tests(void);
 void datum_stratum_tests(void);
 void datum_conf_tests(void);
+void datum_parent_fetch_tests(void);
+void datum_pow_tests(void);
+void datum_protocol_tests(void);
+void datum_stratum_dupes_tests(void);
 void datum_utils_tests(void);
+void datum_logger_tests(void);
 void datum_submitblock_tests(void);
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
@@ -105,7 +112,14 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 			break;
 		case 0x101:  // test
 			datum_utils_tests();
+			datum_logger_tests();
 			datum_conf_tests();
+			datum_blocktemplates_tests();
+			datum_coinbaser_tests();
+			datum_parent_fetch_tests();
+			datum_pow_tests();
+			datum_protocol_tests();
+			datum_stratum_dupes_tests();
 			datum_stratum_tests();
 			datum_submitblock_tests();
 			exit(datum_test_failed);
@@ -121,8 +135,7 @@ static struct argp argp = {options, parse_opt, args_doc, doc};
 void datum_print_banner(void) {
 	puts("");
 	puts(" *****************************************************************");
-	puts(" * DATUM Gateway --- Copyright (c) 2024-2025 Bitcoin Ocean, LLC, *");
-	puts(" *                     Jason Hughes, and individual contributors *");
+	puts(" * DATUM Gateway --- Copyright (c) 2024-2026                     *");
 	printf(" * git commit: %-49s *\n", GIT_COMMIT_HASH);
 	puts(" *****************************************************************");
 	puts("");
@@ -184,8 +197,12 @@ int main(const int argc, const char * const * const argv) {
 	}
 	datum_gateway_config_filename = arguments.config_file;
 	
-	// Initialize logger thread
-	datum_logger_init();
+	// Initialize logger thread (CONVOY #6: fail if setup fails)
+	if (datum_logger_init()) {
+		DLOG_FATAL("Error initializing the logger!");
+		usleep(100000);
+		exit(1);
+	}
 	
 	if (datum_protocol_init()) {
 		DLOG_FATAL("Error initializing the DATUM protocol!");
@@ -208,21 +225,9 @@ int main(const int argc, const char * const * const argv) {
 		exit(1);
 	}
 	
-	// Try to connect to the DATUM server, if setup to do so.
+	// Connect concurrently so local work remains available while the pool becomes ready.
 	if (datum_config.datum_pool_host[0] != 0) {
-		while((current_time_millis()-15000 < last_datum_protocol_connect_tsms) && (!datum_protocol_is_active())) {
-			DLOG_INFO("Waiting on DATUM server... %d", (int)((last_datum_protocol_connect_tsms-(current_time_millis()-15000))/1000));
-			sleep(1);
-			if ((datum_config.datum_pool_host[0] != 0) && (!datum_protocol_thread_is_active())) {
-				datum_protocol_start_connector();
-			}
-		}
-	}
-	
-	// TODO: Churn and continue to try and connect while leaving the Stratum server down if pooled mining only
-	if (datum_config.datum_pooled_mining_only && (!datum_protocol_is_active())) {
-		DLOG_ERROR("DATUM server connection could not be established.");
-		fflush(stdout);
+		datum_protocol_start_connector();
 	}
 	
 	DLOG_DEBUG("Starting template fetcher thread");

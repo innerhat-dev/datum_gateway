@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -37,6 +37,7 @@
 #define _DATUM_STRATUM_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifndef T_DATUM_CLIENT_DATA
@@ -50,12 +51,30 @@
 #define MAX_STRATUM_JOBS 256
 
 #define MAX_COINBASE_TYPES 6
+#define DATUM_COINBASE_ID_EMPTY 0xff
 #define COINBASE_TYPE_TINY 0 // "empty", just pays pool
 #define COINBASE_TYPE_SMALL 1 // Nicehash needs a tiny coinb1, among other things. Max 500 bytes.
 #define COINBASE_TYPE_ANTMAIN 2 // Hack for antminer stock firmware to 750 bytes
 #define COINBASE_TYPE_RESPECTABLE 3 // 6500 byte max (whatsminers)
 #define COINBASE_TYPE_YUGE 4 // 16KB max (ePIC, bitaxe)
 #define COINBASE_TYPE_ANTMAIN2 5 // 2.25KB max (S21, +?)
+// The classes were sized to what SHA256d firmware could accept, since those
+// miners receive coinb1/coinb2 and hash the coinbase. On BLAKE2b work the
+// miner receives 000000 || H2 || 00000000 as coinb1 (H2 is the "Merge-mining
+// hook" tagged hash, which commits to the coinbase) and an empty coinb2, and
+// the work root is blake2b(0x00 || coinb1 || extranonce), so the coinbase
+// itself never reaches the miner. A smaller class therefore only omits some of
+// the pool's dictated outputs from the block; their value is paid to the
+// pool's address as the remainder. BLAKE2b work serves every miner
+// COINBASE_TYPE_YUGE once the full coinbase is ready. Until then a pooled
+// job is DATUM_COINBASE_ID_EMPTY (subsidy-only, not class 0 + a full
+// template); solo stays COINBASE_TYPE_TINY. Classes 1, 2, 3 and 5 are still
+// built, but their indexes never appear in a job id. The 16000-byte limit of
+// COINBASE_TYPE_YUGE covers the whole coinbase transaction
+// (datum_stratum_coinbase_fit_to_template subtracts the fixed bytes), so it
+// fits in STRATUM_COINBASE2_MAX_LEN (32768 hex characters, 16384 bytes) and
+// holds a little under 512 P2WPKH outputs (31 bytes each), the most a
+// coinbaser dictates, but only about 365 taproot outputs (43 bytes each).
 
 // Submitblock json rpc command max size is max block size * 2 for ascii plus some breathing room
 #define MAX_SUBMITBLOCK_SIZE 8500000
@@ -119,7 +138,7 @@ typedef struct {
 	int sigops;
 } T_DATUM_TXN_OUTPUT;
 
-typedef struct {
+typedef struct T_DATUM_STRATUM_JOB {
 	int global_index;
 	
 	char job_id[24];
@@ -132,11 +151,11 @@ typedef struct {
 	uint32_t nbits_uint;
 	char ntime[18];
 	unsigned char block_target[32];
-	// BLAKE2b / Knots header-v2 job fields (unused when header_version < 2)
-	unsigned char blake2b_commitment[32];
-	unsigned char blake2b_sia_prevhash[32];
-	unsigned char blake2b_sia_coinb1[39];
+	// BLAKE2b job fields
 	uint32_t blake2b_time_on_wire;
+	uint8_t blake2b_flags;
+	// Tagged hash shared by every submitted share for this job.
+	unsigned char blake2b_prevblock_hidden[32];
 	
 	T_DATUM_TEMPLATE_DATA *block_template;
 	
@@ -149,8 +168,8 @@ typedef struct {
 	// when fetching the coinbaser, we'll just stash all of the possible and valid output scripts here
 	T_DATUM_TXN_OUTPUT available_coinbase_outputs[512];
 	int available_coinbase_outputs_count;
-	unsigned char pool_addr_script[64];
-	int pool_addr_script_len;
+	uint8_t pool_addr_script[MAX_OUTPUT_SCRIPT_LEN];
+	uint8_t pool_addr_script_len;
 	
 	// multiple coinbase options
 	// 0 = "empty" --- just pays pool addr, and possibly TIDES data.  extranonce in coinbase if fits, or in first output if not.
@@ -162,7 +181,6 @@ typedef struct {
 	T_DATUM_STRATUM_COINBASE coinbase[MAX_COINBASE_TYPES];
 	T_DATUM_STRATUM_COINBASE subsidy_only_coinbase;
 	int target_pot_index; // where in coinb1 do we put our per-user vardiff pot value?
-	int blake2b_coinbase_index; // the one coinbase[] a BLAKE2b job commits to; every v2 client shares it, since the hasher extranonce lives in the header
 	
 	uint64_t coinbase_value;
 	uint64_t height;
@@ -223,10 +241,6 @@ typedef struct {
 	char useragent[128];
 	char last_auth_username[192];
 	
-	bool extension_version_rolling;
-	uint32_t extension_version_rolling_mask;
-	unsigned char extension_version_rolling_bits;
-	
 	bool extension_minimum_difficulty;
 	double extension_minimum_difficulty_value;
 	
@@ -275,12 +289,25 @@ const char *datum_stratum_mod_username(const char *username_s, char *username_bu
 int send_mining_notify(T_DATUM_CLIENT_DATA *c, bool clean, bool quickdiff, bool new_block);
 void update_stratum_job(T_DATUM_TEMPLATE_DATA *block_template, bool new_block, int job_state);
 void datum_stratum_job_refresh_blake2b(T_DATUM_STRATUM_JOB *s);
-bool datum_stratum_job_blake2b_commitment_from_txn(const T_DATUM_STRATUM_JOB *s, const unsigned char *cb_txn, size_t cb_len, unsigned char *commitment);
-bool datum_stratum_job_blake2b_commitment(T_DATUM_STRATUM_JOB *s, int coinbase_index, unsigned char pot, unsigned char *commitment, unsigned char *sia_coinb1);
+bool datum_stratum_job_blake2b_commitment_from_txn(const T_DATUM_STRATUM_JOB *s, const unsigned char *cb_txn, size_t cb_len, unsigned char target_pot, bool subsidy_only, unsigned char *commitment);
+bool datum_stratum_job_blake2b_commitment(T_DATUM_STRATUM_JOB *s, const T_DATUM_STRATUM_COINBASE *cb, bool subsidy_only, unsigned char pot, unsigned char *commitment, unsigned char *coinb1);
+bool datum_stratum_share_is_unmasked_block(
+	const T_DATUM_STRATUM_JOB *job, const unsigned char *share_hash);
+unsigned int datum_stratum_coinbase_index(const T_DATUM_STRATUM_THREADPOOL_DATA *sdata, bool new_block);
 void stratum_job_merkle_root_calc(T_DATUM_STRATUM_JOB *s, unsigned char *coinbase_txn_hash, unsigned char *merkle_root_output);
 int assembleBlockAndSubmit(uint8_t *block_header, uint8_t *coinbase_txn, size_t coinbase_txn_size, T_DATUM_STRATUM_JOB *job, T_DATUM_STRATUM_THREADPOOL_DATA *sdata, const char *block_hash_hex, bool empty_work, const unsigned char *extranonce);
 size_t datum_stratum_coinbase_for_block_hex(char *out, size_t out_size, const uint8_t *coinbase_txn, size_t coinbase_txn_size, bool add_witness);
 bool datum_stratum_block_needs_witness(const T_DATUM_STRATUM_JOB *job, bool subsidy_only);
+void datum_stratum_describe_block_finder(char *out, size_t outsz, const T_DATUM_CLIENT_DATA *c, const char *username, bool empty_work);
+size_t datum_stratum_build_block_request_parts(char *out, size_t out_size,
+	const uint8_t *block_header,
+	const uint8_t *coinbase_txn, size_t coinbase_txn_size, bool add_witness,
+	uint32_t transaction_count, const char *transactions_hex,
+	size_t transactions_hex_size, bool subsidy_only, size_t *header_hex_offset);
+bool datum_stratum_abw_finalize_block_request(char *request, size_t request_size,
+	size_t header_hex_offset, const uint8_t raw_pow_hash[32],
+	uint8_t xor_clear_bits, const uint8_t xor_key[16],
+	const uint8_t expected_pow_hash[32], char block_hash_hex[65]);
 void generate_coinbase_txns_for_stratum_job(T_DATUM_STRATUM_JOB *s, bool empty_only);
 int send_mining_set_difficulty(T_DATUM_CLIENT_DATA *c);
 bool stratum_latest_empty_check_ready_for_full(void);
@@ -296,6 +323,8 @@ void datum_stratum_v1_socket_thread_client_new(T_DATUM_CLIENT_DATA *c);
 int datum_stratum_v1_global_subscriber_count(void);
 double datum_stratum_v1_est_total_th_sec(void);
 void datum_stratum_v1_shutdown_all(void);
+void datum_stratum_set_accept_clients(bool accept);
+bool datum_stratum_accept_clients(void);
 
 extern T_DATUM_SOCKET_APP *global_stratum_app;
 

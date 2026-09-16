@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -47,12 +47,30 @@
 // Works out to over 5 minutes of jobs at 30-40 second work change intervals. No miner should be holding on to work this long.
 #define MAX_DATUM_PROTOCOL_JOBS 8
 
+// Pre-v1 draft discriminator. This is not a released DATUM protocol version.
+#define DATUM_ABW_DRAFT_REVISION 0
+#define DATUM_ABW_SHARE_TARGET_BASE_BITS 32
+#define DATUM_ABW_ASSIGNMENT_SLOTS 16
+#define DATUM_ABW_ASSIGNMENT_ACTIVE 0x01
+
 #define DATUM_PROTOCOL_VERSION "v0.4.1-beta" // this is sent to the server as a UA
 #define DATUM_PROTOCOL_CONNECT_TIMEOUT 30
+
+/* Optional 0x11 trailer after the coinbaser blob: 4-byte magic then the
+ * 32-byte request prevhash. Bytes are not all equal so a repeated-byte
+ * pad cannot match. Stock OCEAN/CONVOY replies stay value + blob. */
+#define DATUM_COINBASER_PREVHASH_MAGIC "CBPH"
+#define DATUM_COINBASER_PREVHASH_MAGIC_LEN 4
+#define DATUM_COINBASER_PREVHASH_TRAILER_LEN 36
 
 #define DATUM_PROTOCOL_MAX_CMD_DATA_SIZE 4194304 // 2^22 - protocol limit!
 #define DATUM_PROTOCOL_BUFFER_SIZE (DATUM_PROTOCOL_MAX_CMD_DATA_SIZE*3)
 #define DATUM_PROTOCOL_MAX_USERNAME_LEN 384
+
+// Protocol command 6 carries sequential DBF1 fragments. Only one small
+// fragment is admitted after the primary send queue drains.
+#define DATUM_BULK_FRAGMENT_HEADER_SIZE 16
+#define DATUM_BULK_FRAGMENT_DATA_SIZE (16 * 1024)
 
 #define MAX_DATUM_CLIENT_EVENTS 32
 
@@ -61,14 +79,14 @@
 // It's likely possible to brute force the XOR key to break packets down into individual commands, but the contents and nature of the
 // cmd is still obfuscated and unrecoverable without the session keys.
 
-typedef struct __attribute__((packed)) T_DATUM_PROTOCOL_HEADER {
+typedef struct T_DATUM_PROTOCOL_HEADER {
 	uint32_t cmd_len:22; // max cmd size is 2^22 (~4MB), which is roughly the max block size for a raw submission or a raw template validation
-	uint8_t reserved:2; // save for later use
-	bool is_signed:1;
-	bool is_encrypted_pubkey:1;
-	bool is_encrypted_channel:1;
+	bool is_signed;
+	bool is_encrypted_pubkey;
+	bool is_encrypted_channel;
 	uint8_t proto_cmd:5; // 32 protocol level commands
 } T_DATUM_PROTOCOL_HEADER;
+#define T_DATUM_PROTOCOL_HEADER_WIRE_BYTES 4
 
 typedef struct {
 	bool is_remote;
@@ -92,6 +110,7 @@ typedef struct T_DATUM_PROTOCOL_JOB {
 	unsigned char datum_job_id;
 	T_DATUM_STRATUM_JOB *sjob;
 	T_DATUM_STRATUM_JOB *server_sjob;
+	char server_job_id[sizeof(((T_DATUM_STRATUM_JOB *)0)->job_id)];
 	
 	bool server_has_merkle_branches;
 	
@@ -113,6 +132,9 @@ typedef struct {
 	bool is_block;
 	bool quickdiff;
 	bool blake2b_use_time_offset;
+	// Internal token is wire slot + 1 so zero remains an unset sentinel.
+	uint8_t abw_assignment_id;
+	unsigned char raw_pow_hash[32];
 	unsigned char target_byte;
 	uint16_t target_byte_index;
 	uint64_t ntime;
@@ -124,9 +146,19 @@ typedef struct {
 int datum_protocol_init(void);
 int datum_encrypt_generate_keys(DATUM_ENC_KEYS *keys);
 bool datum_protocol_is_active(void);
+bool datum_protocol_abw_required(void);
 void datum_increment_session_nonce(void *s);
 int datum_protocol_fetch_coinbaser(uint64_t value);
 int datum_protocol_coinbaser_fetch(void *s);
+int datum_protocol_migration_request(int len, const unsigned char *data);
+bool datum_protocol_take_connect_endpoint(
+	char *host,
+	size_t host_size,
+	int *port,
+	char *pubkey,
+	size_t pubkey_size
+);
+bool datum_protocol_migration_expired(uint64_t now_ms);
 int datum_protocol_pow_submit(
 	const T_DATUM_CLIENT_DATA *c,
 	const T_DATUM_STRATUM_JOB *job,
@@ -137,6 +169,8 @@ int datum_protocol_pow_submit(
 	const unsigned char *block_header,
 	const uint64_t target_diff,
 	const unsigned char *full_cb_tx,
+	const size_t full_cb_tx_size,
+	const unsigned char *raw_pow_hash,
 	const T_DATUM_STRATUM_COINBASE *cb,
 	unsigned char *extranonce,
 	unsigned char coinbase_index
@@ -146,11 +180,15 @@ bool datum_protocol_thread_is_active(void);
 void datum_protocol_start_connector(void);
 unsigned char datum_protocol_setup_new_job_idx(void *sx);
 int datum_protocol_pow_build_message(T_DATUM_PROTOCOL_POW *pow, unsigned char *msg, size_t msg_size);
+bool datum_protocol_abw_apply_active(T_DATUM_TEMPLATE_DATA *block_template);
+bool datum_protocol_abw_health_ok(void);
 
 extern uint64_t datum_accepted_share_count;
 extern uint64_t datum_accepted_share_diff;
 extern uint64_t datum_rejected_share_count;
 extern uint64_t datum_rejected_share_diff;
+
+#define DATUM_CONFIG_FLAG_ABW_DISABLED 0x01
 
 #define DATUM_REJECT_BAD_JOB_ID 10
 #define DATUM_REJECT_BAD_COINBASE_ID 11

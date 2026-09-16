@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -142,6 +142,7 @@ err_out:
 json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, const char *rpc_req, const char *extra_header, long * const http_resp_code_out) {
 	json_t *val, *err_val, *res_val;
 	CURLcode rc;
+	long http_resp_code = 0;
 	struct data_buffer all_data = { };
 	struct upload_buffer upload_data;
 	json_error_t err = { };
@@ -151,7 +152,9 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_ENCODING, "");
-	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+	// No CURLOPT_FAILONERROR: bitcoind answers an RPC error with HTTP 500 and
+	// the reason in the body, which FAILONERROR would discard unread. (CONVOY #4)
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 0L);
 	curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, all_data_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &all_data);
@@ -184,8 +187,9 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	
 	rc = curl_easy_perform(curl);
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_resp_code);
+	if (http_resp_code_out) *http_resp_code_out = http_resp_code;
 	if (rc) {
-		if (http_resp_code_out) curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, http_resp_code_out);
 		DLOG_DEBUG("json_rpc_call: HTTP request failed: %s", curl_err_str);
 		DLOG_DEBUG("json_rpc_call: Request was: %s",rpc_req);
 		goto err_out;
@@ -193,7 +197,13 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 	
 	val = JSON_LOADS(all_data.buf, &err);
 	if (!val) {
-		DLOG_DEBUG("JSON decode failed(%d): %s", err.line, err.text);
+		if (http_resp_code == 401) {
+			DLOG_DEBUG("json_rpc_call: HTTP 401 from %s (credentials refused)", url);
+		} else if (http_resp_code >= 400) {
+			DLOG_ERROR("json_rpc_call: HTTP %ld from %s", http_resp_code, url);
+		} else {
+			DLOG_DEBUG("JSON decode failed(%d): %s", err.line, err.text);
+		}
 		goto err_out;
 	}
 	
@@ -201,7 +211,15 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 		res_val = json_object_get(val, "result");
 		err_val = json_object_get(val, "error");
 		
-		if (!res_val || json_is_null(res_val) || (err_val && !json_is_null(err_val))) {
+		// A JSON-RPC reply's "result" being present-but-null is a legitimate, successful reply
+		// (e.g. submitblock/preciousblock return null on success) -- it's the caller's job to
+		// decide what a given method's result means, not ours. The only conditions that actually
+		// indicate we didn't get a usable reply are: the "result" key being missing outright (a
+		// non-compliant response), or a genuine non-null "error".
+		const bool has_error = err_val && !json_is_null(err_val);
+		const bool missing_result = !res_val;
+		
+		if (has_error || missing_result) {
 			char *s;
 			
 			if (err_val) {
@@ -213,8 +231,19 @@ json_t *json_rpc_call_full(CURL *curl, const char *url, const char *userpass, co
 			DLOG_DEBUG("JSON-RPC call failed: %s", s);
 			
 			free(s);
+			json_decref(val);
 			
 			goto err_out;
+		}
+	}
+
+	// Knots puts RPC errors in the JSON body and often answers with HTTP 500.
+	// If the body already parsed and passed the result/error gate, keep it.
+	if (http_resp_code >= 400) {
+		if (http_resp_code == 401) {
+			DLOG_DEBUG("json_rpc_call: HTTP 401 from %s (usable JSON body kept)", url);
+		} else {
+			DLOG_DEBUG("json_rpc_call: HTTP %ld from %s (usable JSON body kept)", http_resp_code, url);
 		}
 	}
 	

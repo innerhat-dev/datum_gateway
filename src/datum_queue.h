@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -60,6 +60,7 @@ typedef struct {
 int datum_queue_prep(DATUM_QUEUE *q, const int max_items, const int item_size, int (*item_handler)(void *));
 int datum_queue_process(DATUM_QUEUE *q);
 int datum_queue_add_item(DATUM_QUEUE *q, void *item);
+int datum_queue_clear(DATUM_QUEUE *q);
 int datum_queue_free(DATUM_QUEUE *q);
 
 #endif

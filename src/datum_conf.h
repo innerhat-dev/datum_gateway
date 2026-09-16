@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -44,6 +44,9 @@
 #include <stdint.h>
 
 #include <jansson.h>
+
+#include "datum_blocktemplates.h"
+#include "datum_coinbaser.h"
 
 enum datum_conf_vartype {
 	// NOTE: Keep in sync with datum_conf_var_type_text
@@ -129,7 +132,7 @@ typedef struct {
 	char mining_coinbase_tag_secondary[64];
 	char mining_save_submitblocks_dir[256];
 	bool mining_allow_hasher_time_rolling;
-	char mining_pow_algorithm[16];
+	bool mining_abw_verify_all_shares_on_disclosure;
 	int coinbase_unique_id;
 	
 	char api_admin_password[72];
@@ -155,6 +158,11 @@ typedef struct {
 	
 	char datum_pool_host[1024];
 	int datum_pool_port;
+	char datum_pool_migration_host[1024];
+	int datum_pool_migration_port;
+	char datum_pool_migration_pubkey[129];
+	uint64_t datum_pool_migration_deadline_ms;
+	int datum_pool_migration_max_seconds;
 	bool datum_pool_pass_workers;
 	bool datum_pool_pass_full_users;
 	bool datum_always_pay_self;
@@ -163,10 +171,10 @@ typedef struct {
 	int datum_protocol_global_timeout;
 	uint64_t datum_protocol_global_timeout_ms;
 	
-	uint32_t prime_id;
-	unsigned char override_mining_pool_scriptsig[256];
-	int override_mining_pool_scriptsig_len;
-	char override_mining_coinbase_tag_primary[256];
+	uint64_t prime_id;
+	uint8_t override_mining_pool_scriptpubkey[MAX_OUTPUT_SCRIPT_LEN];
+	uint8_t override_mining_pool_scriptpubkey_len;
+	char override_mining_coinbase_tag_primary[MAX_COINBASE_TAG_SPACE + 1];
 	uint64_t override_vardiff_min;
 } global_config_t;
 

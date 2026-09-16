@@ -10,7 +10,7 @@
  *
  * ---
  *
- * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
+ * Copyright (c) 2026 Luke Dashjr
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -33,27 +33,27 @@
  *
  */
 
-#ifndef _DATUM_SUBMITBLOCK_H_
-#define _DATUM_SUBMITBLOCK_H_
+#ifndef _DATUM_PARENT_FETCH_H_
+#define _DATUM_PARENT_FETCH_H_
 
-#include <stdbool.h>
-#include <jansson.h>
+#include <stddef.h>
+#include <stdint.h>
 
-// What a submitblock reply means. (CONVOY #3)
-typedef enum {
-	DATUM_SUBMITBLOCK_UNKNOWN = 0,
-	DATUM_SUBMITBLOCK_ACCEPTED,
-	DATUM_SUBMITBLOCK_DUPLICATE,
-	DATUM_SUBMITBLOCK_REJECTED,
-} datum_submitblock_status;
+#define DATUM_PARENT_FETCH_STATUS_QUEUED 0x00
+#define DATUM_PARENT_FETCH_STATUS_SUCCESS 0x01
+#define DATUM_PARENT_FETCH_STATUS_JOB_MISMATCH 0xF0
+#define DATUM_PARENT_FETCH_STATUS_BUSY 0xF6
+#define DATUM_PARENT_FETCH_STATUS_UNAVAILABLE 0xF7
+#define DATUM_PARENT_FETCH_STATUS_RPC_FAILED 0xF8
 
-datum_submitblock_status datum_submitblock_reply_status(const json_t *reply);
-bool datum_submitblock_log_reply(const json_t *reply, const char *block_hash_hex);
-void datum_submitblock_reply_tests(void);
+typedef void (*datum_parent_fetch_reply_fn)(
+	uint8_t job_id, uint64_t session_generation, uint8_t status,
+	const uint8_t parent_hash[32],
+	const uint8_t *block, size_t block_size);
 
-void datum_submitblock_init(void);
-void datum_submitblock_trigger(const char *ptr, const char *hash);
-bool datum_submitblock_trigger_owned(char *ptr, const char *hash);
-void datum_submitblock_waitfree(void);
+int datum_parent_fetch_init(datum_parent_fetch_reply_fn reply);
+uint8_t datum_parent_fetch_enqueue(
+	uint8_t job_id, uint64_t session_generation,
+	const uint8_t parent_hash[32]);
 
 #endif

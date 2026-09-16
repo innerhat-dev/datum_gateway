@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -171,6 +171,23 @@ int datum_queue_add_item(DATUM_QUEUE *q, void *item) {
 	q->queue_next[buffer_id]++; // bounds check is above, since we can potentially delay to wait for the writer instead of failing here
 	pthread_rwlock_unlock(&q->buffer_rwlock[buffer_id]);
 	//DLOG_DEBUG("QUEUE ADD @ %p", out);
+	return 0;
+}
+
+int datum_queue_clear(DATUM_QUEUE *q) {
+	if (!q->initialized) return -1;
+	
+	pthread_rwlock_wrlock(&q->active_buffer_rwlock);
+	pthread_rwlock_wrlock(&q->buffer_rwlock[0]);
+	pthread_rwlock_wrlock(&q->buffer_rwlock[1]);
+	q->queue_next[0] = 0;
+	q->queue_next[1] = 0;
+	q->queue_version[0]++;
+	q->queue_version[1]++;
+	q->active_buffer_version = q->queue_version[q->active_buffer];
+	pthread_rwlock_unlock(&q->buffer_rwlock[1]);
+	pthread_rwlock_unlock(&q->buffer_rwlock[0]);
+	pthread_rwlock_unlock(&q->active_buffer_rwlock);
 	return 0;
 }
 

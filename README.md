@@ -1,6 +1,6 @@
 # DATUM Gateway
 **Decentralized Alternative Templates for Universal Mining**
-(c) 2024-2025 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
+(c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
 
 The DATUM Gateway implements lightweight efficient client side decentralized block template creation for true solo mining.
 
@@ -10,14 +10,12 @@ For miners wanting to pool rewards, it facilitates communication with a DATUM-su
 
 The work provided by the gateway to mining hardware is generated only from the local node generating templates for the miner. The real miner is always whoever is running the Bitcoin node. With DATUM, that's not the pool. As the protocol is intended solely for mining of decentralized block templates, the DATUM protocol has no mechanisms for the pool providing the information needed to construct work or a block template.
 
-Currently the DATUM Gateway supports communication with mining hardware using the Stratum v1 protocol with version rolling extensions (aka "ASICBoost"). SHA256d ASICs and BLAKE2b / BLAKE2b-sia miners are supported.  Communication with the Bitcoin node is via RPC and must support GBT ("getblocktemplate").  Finally, communication with the pool is via the DATUM protocol.
-
-**Using Bitcoin Knots is highly recommended**. This gives miners fine controls over how they wish to construct their block templates.  Other node implementations that support GBT can also be used.  This includes Bitcoin Core, but it is severely lacking in template control options.  That is unfortunately a centralizing force which partly defeats the purpose of decentralizing block template creation in the first place.
+Currently the DATUM Gateway supports communication with mining hardware using the Stratum v1 protocol. BLAKE2b and BLAKE2b-Sia miners are supported.  Communication with the Bitcoin node is via RPC and must support GBT ("getblocktemplate").  Finally, communication with the pool is via the DATUM protocol.
 
 The DATUM Gateway only supports mining Bitcoin.  Modifying the code to support non-Bitcoin is not straightforward, as many optimizations and design considerations are tightly tied to Bitcoin-specific restraints for efficiency.
 
 ## DATUM Protocol
-The DATUM Gateway's communication with the mining pool is via the DATUM Protocol.  This is an encrypted communication link between the DATUM Gateway (client) and DATUM Prime (pool side).
+The DATUM Gateway's communication with the mining pool is via the DATUM Protocol.  This is an encrypted communication link between the DATUM Gateway (client) and the DATUM server (pool side).
 
 The protocol itself was made from the ground up as a custom protocol.  Its specification is evolving, subject to change, and will be published elsewhere.
 
@@ -31,9 +29,9 @@ The core concepts of the protocol:
 
 With the current version of the protocol, the pool does block validation after coordinating with the miner. This is strictly to ensure miners are not accidentally creating invalid blocks while DATUM is still undergoing testing. In a future version of the protocol, the pool will not be in charge of this function and will be almost completely blinded to the contents of the miner's block template.
 
-The protocol is not specific to a pooled reward system, as the Gateway coordinates the appropriate generation transaction with the pool.  However, in the spirit of maximum decentralization, the pool should implement rewarding miners directly from generated payouts, such as with OCEAN's TIDES reward system.
+The protocol is not specific to a pooled reward system, as the Gateway coordinates the appropriate generation transaction with the pool.  However, in the spirit of maximum decentralization, the pool should implement rewarding miners directly from generated payouts, such as with CONVOY's TIDES reward system.
 
-![DATUM v0 2-beta recommended setup - network diagram](doc/DATUM_recommended_setup-network_diagram.svg)
+![DATUM recommended setup - network diagram](doc/DATUM_recommended_setup-network_diagram.svg)
 
 ## Requirements
 
@@ -48,7 +46,7 @@ The protocol is not specific to a pooled reward system, as the Gateway coordinat
 
 This list is not extensive, but the main goal is the have a stable system for your Bitcoin node and the Gateway such that your node is processing new incoming blocks and getting templates to the Gateway as quickly as possible.  While this may all work on relatively low end hardware, your mileage may vary.
 
-No modifications to the Bitcoin node source code are required for SHA256d mining; the Gateway uses standard GBT. BLAKE2b header-v2 mining (BLAKE2b and BLAKE2b-sia miners) needs a Knots node built with the POW change. With `mining.pow_algorithm` left at `auto` (the default), the Gateway advertises `blake2b` in GBT and turns on header-v2 when the template's `rules` include `!blake2b`.
+No modifications to the Bitcoin node source code is required for the Gateway, as it uses the standard GBT mechanism for template fetch.
 
 The following external libraries are required:
  - libcurl
@@ -61,8 +59,7 @@ Your Bitcoin node must be configured to construct blocks as you desire.  Bitcoin
 
 At this time, you must also reserve some block space for the pool's generation transaction.  The following options are currently recommended:
 
-    blockmaxsize=3985000
-    blockmaxweight=3985000
+    blockmaxweight=785000
 
 Note: This reservation requirement will be removed for Bitcoin Knots users in a future version of the DATUM Gateway thanks to support for on-the-fly specification of these metrics by the client in Knots.
 
@@ -79,7 +76,6 @@ Finally, the Gateway must have RPC access to your node, and you must add an RPC 
 Some additional recommendations:
 
     maxmempool=1000
-    blockreconstructionextratxn=1000000
 
 As a true miner, you'll most likely want as many valid transactions as possible in your mempool which meet your node's policies.
 
@@ -143,14 +139,6 @@ Note that the API/web admin password is also used for preventing CSRF attacks, s
 
 You should review the [documentation on usernames](doc/usernames.md) next.
 Once you have everything running, you can point miners at the Gateway.
-
-### BLAKE2b header v2 (Knots POW change)
-
-Header-v2 jobs are meant for BLAKE2b and BLAKE2b-sia miners (Sia-style Stratum work), not only one model.
-
-`getblocktemplate` stays BIP22. The planned Knots signal is a required `!blake2b` entry in `rules`. The Gateway always requests `blake2b` unless you force `sha256d`, and treats `!blake2b` (or `blake2b`) in `rules` as header-v2.
-
-`auto` (the default) stays on SHA256d until GBT advertises blake2b that way, or via older fallbacks (`powalgorithm`, `header_version`, `coinbaseaux.blake2b_headline`, version bit `0x80000000`). Set `mining.pow_algorithm` to `blake2b` only if your node does not advertise the rule yet. `allow_hasher_time_rolling` only matters once the node is committing `UseTimeOffset` in header 1.
 
 ## Docker
 

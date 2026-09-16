@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -58,6 +58,8 @@
 // --- max weight = 4000000
 
 #define MAX_BLOCK_SIZE_BYTES 4000000
+
+#define MAX_OUTPUT_SCRIPT_LEN 83
 
 // Assumption notes
 
@@ -151,6 +153,7 @@ typedef struct T_DATUM_TEMPLATE_TXN {
 
 typedef struct {
 	uint16_t	local_index; // tie to stratum work
+	uint64_t	generation; // unique identity for this use of the ring slot
 	
 	uint64_t	coinbasevalue; //
 	uint64_t	mintime; //
@@ -160,6 +163,10 @@ typedef struct {
 	uint32_t	height; //
 	uint32_t	version; //
 	uint32_t	sigoplimit; //
+	bool		abw_enabled;
+	// Internal token is the compact wire slot plus one.
+	uint8_t		abw_assignment_id;
+	uint8_t		xor_key_hash[32];
 	
 	char		bits[9]; //
 	char		dummy[7]; // unused, possibly for alignment
@@ -173,14 +180,6 @@ typedef struct {
 	char		block_target_hex[72]; //
 	uint8_t		block_target[32]; // calculated from bits
 
-	uint32_t	header_version; // 0 = SHA256d / BIP22; 2 = Knots header-v2 / BLAKE2b
-	uint32_t	header_transaction_count; //
-	uint8_t		header_flags; //
-	uint32_t	header_time_offset; //
-	uint8_t		xor_key_mask_clear_bits; //
-	uint8_t		xor_key[16]; //
-	uint8_t		merge_mining_rhs[32]; //
-	
 	uint32_t 	txn_count;
 	uint32_t	txn_total_weight;
 	uint32_t	txn_total_size;
@@ -197,10 +196,10 @@ typedef struct {
 extern const char *datum_blocktemplates_error;
 
 int datum_template_init(void);
-bool datum_gbt_advertise_blake2b(void);
 bool datum_gbt_rules_want_blake2b(json_t *gbt);
-bool datum_gbt_parse_header_fields(json_t *gbt, T_DATUM_TEMPLATE_DATA *tdata);
 T_DATUM_TEMPLATE_DATA *datum_gbt_parser(json_t *gbt);
+bool datum_blocktemplates_abw_ready(T_DATUM_TEMPLATE_DATA *block_template,
+	bool datum_active, bool abw_required);
 void *datum_gateway_template_thread(void *args);
 void datum_blocktemplates_notifynew_sighandler();
 void datum_blocktemplates_notifynew(const char *prevhash, int height);

@@ -3,14 +3,14 @@
  * DATUM Gateway
  * Decentralized Alternative Templates for Universal Mining
  *
- * This file is part of OCEAN's Bitcoin mining decentralization
+ * This file is part of CONVOY's Bitcoin mining decentralization
  * project, DATUM.
  *
- * https://ocean.xyz
+ * https://convoy.xyz
  *
  * ---
  *
- * Copyright (c) 2024-2025 Bitcoin Ocean, LLC & Jason Hughes
+ * Copyright (c) 2024-2026 Bitcoin Ocean, LLC, Jason Hughes, and individual contributors
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -129,9 +129,9 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 		.required = false, .ptr = datum_config.mining_save_submitblocks_dir,			.default_string[0] = "", .max_string_len = sizeof(datum_config.mining_save_submitblocks_dir) },
 	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "allow_hasher_time_rolling",	.description = "Allow hasher time rolling for BLAKE2b jobs",
 		.required = false, .ptr = &datum_config.mining_allow_hasher_time_rolling, 		.default_bool = false },
-	{ .var_type = DATUM_CONF_STRING, 	.category = "mining", 		.name = "pow_algorithm",			.description = "PoW algorithm: auto (follow GBT rules, including !blake2b), blake2b (BLAKE2b / BLAKE2b-sia header v2), or sha256d",
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "mining", 		.name = "abw_verify_all_shares_on_disclosure",	.description = "Retain ABW proofs until key disclosure and alarm if the pool ignored a block",
 		.example_default = true,
-		.required = false, .ptr = datum_config.mining_pow_algorithm,				.default_string[0] = "auto", .max_string_len = sizeof(datum_config.mining_pow_algorithm) },
+		.required = false, .ptr = &datum_config.mining_abw_verify_all_shares_on_disclosure, 	.default_bool = true },
 	
 	// API/dashboard
 	{ .var_type = DATUM_CONF_STRING, 	.category = "api",	 		.name = "admin_password",			.description = "API password for actions/changes (username 'admin'; disabled if blank)",
@@ -178,11 +178,14 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 	
 	// datum options
 	{ .var_type = DATUM_CONF_STRING, 	.category = "datum", 		.name = "pool_host",					.description = "Remote DATUM server host/ip to use for decentralized pooled mining (set to \"\" to disable pooled mining)",
-		.required = false, .ptr = datum_config.datum_pool_host,			.default_string[0] = "datum-beta1.mine.ocean.xyz", .max_string_len = sizeof(datum_config.datum_pool_host) },
+		.required = false, .ptr = datum_config.datum_pool_host,			.default_string[0] = "datum-beta1.mine.convoy.xyz", .max_string_len = sizeof(datum_config.datum_pool_host) },
 	{ .var_type = DATUM_CONF_INT, 		.category = "datum",		.name = "pool_port",					.description = "Remote DATUM server port",
 		.required = false, .ptr = &datum_config.datum_pool_port, .default_int = 28915 },
 	{ .var_type = DATUM_CONF_STRING, 	.category = "datum", 		.name = "pool_pubkey",					.description = "Public key of the DATUM server for initiating encrypted connection. Get from secure location, or set to empty to auto-fetch.",
-		.required = false, .ptr = datum_config.datum_pool_pubkey,		.default_string[0] = "f21f2f0ef0aa1970468f22bad9bb7f4535146f8e4a8f646bebc93da3d89b1406f40d032f09a417d94dc068055df654937922d2c89522e3e8f6f0e649de473003", .max_string_len = sizeof(datum_config.datum_pool_pubkey) },
+		.required = false, .ptr = datum_config.datum_pool_pubkey,		.default_string[0] = "dbb11fa0c2b5403e4f798fa6071bb97e6079d219598366032fdf2ae01962b13c5e66e2be7d6b008f0b2603f3e6f6fc64768fa786c8129c46d3e30a5867734b62", .max_string_len = sizeof(datum_config.datum_pool_pubkey) },
+	{ .var_type = DATUM_CONF_INT, 		.category = "datum", 		.name = "migration_max_seconds",		.description = "Maximum time to remain away from the configured DATUM server after a server-requested migration (0 disables migration)",
+		.example_default = true,
+		.required = false, .ptr = &datum_config.datum_pool_migration_max_seconds, .default_int = 86400 },
 	{ .var_type = DATUM_CONF_BOOL, 		.category = "datum", 		.name = "pool_pass_workers",			.description = "Pass stratum miner usernames as sub-worker names to the pool (pool_username.miner's username)",
 		.example_default = true,
 		.required = false, .ptr = &datum_config.datum_pool_pass_workers, 		.default_bool = true },
@@ -508,6 +511,10 @@ int datum_read_config(const char *conffile) {
 	}
 	if (datum_config.bitcoind_work_update_seconds > 120) {
 		datum_config.bitcoind_work_update_seconds = 120;
+	}
+	if (datum_config.datum_pool_migration_max_seconds < 0) {
+		DLOG_FATAL("Configuration option datum.migration_max_seconds cannot be negative");
+		return -1;
 	}
 	
 	if (datum_config.bitcoind_rpcuser[0]) {
